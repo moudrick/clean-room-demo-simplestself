@@ -34,10 +34,10 @@ it is necessary to understand the current design.
 Never create, rename, modify, or delete the GitHub organization, LaunchDarkly account, or
 LaunchDarkly project.
 
-The fixed containers are:
+The configured containers are set in ignored local `.env`:
 
-- GitHub organization: `featureflag-extensiveconsumer-demo-org`
-- LaunchDarkly project: `featureflag-extensiveconsumer-demo-key`
+- GitHub organization: `GH_ORG`
+- LaunchDarkly project: `LD_PROJECT_KEY`
 
 Only the repositories and flags enumerated in `SPEC.md` are disposable. Destructive operations
 must retain the exact confirmation requirement and reject every identifier outside that list.

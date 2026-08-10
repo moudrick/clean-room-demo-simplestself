@@ -1,17 +1,22 @@
-export const ORG = 'featureflag-extensiveconsumer-demo-org';
-export const PROJECT = 'featureflag-extensiveconsumer-demo-key';
+export const ORG_ENV = 'GH_ORG';
+export const PROJECT_ENV = 'LD_PROJECT_KEY';
 export const REPOS = ['demo-orders', 'demo-storefront', 'demo-profile'];
 export const FLAGS = ['demo-checkout-rollout', 'demo-legacy-profile', 'demo-retired-banner'];
 export const GH = 'https://api.github.com';
 export const LD = 'https://app.launchdarkly.com';
 const origins = new Set([GH, LD]);
 
-export function assertScope({ org = ORG, project = PROJECT, repos = REPOS, flags = FLAGS } = {}) {
-  if (org !== ORG || project !== PROJECT || repos.length !== REPOS.length || flags.length !== FLAGS.length ||
+export function settingsFor(env) {
+  const org = env[ORG_ENV]; const project = env[PROJECT_ENV];
+  if (!org || !project || !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(org) || !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(project)) throw new Error('Missing or invalid GH_ORG or LD_PROJECT_KEY.');
+  return { org, project };
+}
+export function assertScope({ org, project, repos = REPOS, flags = FLAGS }) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(org) || !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(project) || repos.length !== REPOS.length || flags.length !== FLAGS.length ||
     repos.some((x) => !REPOS.includes(x)) || flags.some((x) => !FLAGS.includes(x))) throw new Error('Refusing an identifier outside the fixed disposable scope.');
 }
-export function requireConfirmation(value) {
-  if (value !== PROJECT) throw new Error('Destructive command requires the exact fixed project key confirmation.');
+export function requireConfirmation(value, project) {
+  if (value !== project) throw new Error('Destructive command requires the exact configured project key confirmation.');
 }
 export function tokensFor(command, env) {
   const names = command === 'run' ? ['GH_DEMO_TOKEN', 'LD_DEMO_TOKEN'] : command === 'doctor'
@@ -49,23 +54,23 @@ export async function request(fetcher, base, path, token, options = {}) {
 }
 const gh = (fetcher, path, token, options) => request(fetcher, GH, path, token, options);
 const ld = (fetcher, path, token, options) => request(fetcher, LD, path, token, options);
-export async function checkGithub(fetcher, token) {
-  const user = await gh(fetcher, '/user', token); await gh(fetcher, `/orgs/${ORG}`, token);
-  const repos = await gh(fetcher, `/orgs/${ORG}/repos?per_page=100`, token);
+export async function checkGithub(fetcher, token, settings) {
+  const user = await gh(fetcher, '/user', token); await gh(fetcher, `/orgs/${settings.org}`, token);
+  const repos = await gh(fetcher, `/orgs/${settings.org}/repos?per_page=100`, token);
   if (!Array.isArray(repos)) throw new Error('Malformed GitHub repository evidence.');
-  for (const repo of repos.filter((r) => REPOS.includes(r.name))) await gh(fetcher, `/repos/${ORG}/${repo.name}`, token);
+  for (const repo of repos.filter((r) => REPOS.includes(r.name))) await gh(fetcher, `/repos/${settings.org}/${repo.name}`, token);
   return user.login || 'OK';
 }
-export async function checkLaunchDarkly(fetcher, token) {
-  const project = await ld(fetcher, `/api/v2/projects/${PROJECT}`, token);
-  if (project.key !== PROJECT) throw new Error('LaunchDarkly project key mismatch.');
-  const flags = await ld(fetcher, `/api/v2/flags/${PROJECT}?limit=100`, token);
+export async function checkLaunchDarkly(fetcher, token, settings) {
+  const project = await ld(fetcher, `/api/v2/projects/${settings.project}`, token);
+  if (project.key !== settings.project) throw new Error('LaunchDarkly project key mismatch.');
+  const flags = await ld(fetcher, `/api/v2/flags/${settings.project}?limit=100`, token);
   if (!Array.isArray(flags.items)) throw new Error('Malformed LaunchDarkly flag evidence.');
   return 'OK';
 }
 export async function doctor(fetcher, env) {
-  const t = tokensFor('doctor', env);
-  const [gDemo, gReset, lDemo, lReset] = await Promise.all([checkGithub(fetcher, t.GH_DEMO_TOKEN), checkGithub(fetcher, t.GH_RESET_TOKEN), checkLaunchDarkly(fetcher, t.LD_DEMO_TOKEN), checkLaunchDarkly(fetcher, t.LD_RESET_TOKEN)]);
+  const t = tokensFor('doctor', env); const settings = settingsFor(env); assertScope({ ...settings });
+  const [gDemo, gReset, lDemo, lReset] = await Promise.all([checkGithub(fetcher, t.GH_DEMO_TOKEN, settings), checkGithub(fetcher, t.GH_RESET_TOKEN, settings), checkLaunchDarkly(fetcher, t.LD_DEMO_TOKEN, settings), checkLaunchDarkly(fetcher, t.LD_RESET_TOKEN, settings)]);
   return [['GH_DEMO_TOKEN', gDemo], ['GH_RESET_TOKEN', gReset], ['LD_DEMO_TOKEN', lDemo], ['LD_RESET_TOKEN', lReset]];
 }
 export async function removeIfPresent(fetcher, base, path, token) {
@@ -77,55 +82,55 @@ export const SOURCES = {
   'demo-storefront': { path: 'src/checkout-banner.js', content: "export const checkoutBanner = 'demo-checkout-rollout';\n", date: null },
   'demo-profile': { path: 'src/profile.js', content: "export const legacyProfile = 'demo-legacy-profile';\n", date: '2020-01-02T03:04:05Z' }
 };
-export async function createRepositoryWithSource(fetcher, token, name, source) {
-  assertScope({ repos: [name, ...REPOS.filter((x) => x !== name)] });
-  await gh(fetcher, `/orgs/${ORG}/repos`, token, { method: 'POST', body: JSON.stringify({ name, private: false, auto_init: false, description: 'Synthetic feature-flag clean-room demo.' }) });
-  const blob = await gh(fetcher, `/repos/${ORG}/${name}/git/blobs`, token, { method: 'POST', body: JSON.stringify({ content: source.content, encoding: 'utf-8' }) });
-  const tree = await gh(fetcher, `/repos/${ORG}/${name}/git/trees`, token, { method: 'POST', body: JSON.stringify({ tree: [{ path: source.path, mode: '100644', type: 'blob', sha: blob.sha }] }) });
+export async function createRepositoryWithSource(fetcher, token, settings, name, source) {
+  assertScope({ ...settings, repos: [name, ...REPOS.filter((x) => x !== name)] });
+  await gh(fetcher, `/orgs/${settings.org}/repos`, token, { method: 'POST', body: JSON.stringify({ name, private: false, auto_init: false, description: 'Synthetic feature-flag clean-room demo.' }) });
+  const blob = await gh(fetcher, `/repos/${settings.org}/${name}/git/blobs`, token, { method: 'POST', body: JSON.stringify({ content: source.content, encoding: 'utf-8' }) });
+  const tree = await gh(fetcher, `/repos/${settings.org}/${name}/git/trees`, token, { method: 'POST', body: JSON.stringify({ tree: [{ path: source.path, mode: '100644', type: 'blob', sha: blob.sha }] }) });
   const stamp = source.date || new Date().toISOString();
   const who = { name: 'Synthetic Demo', email: 'synthetic-demo@example.invalid', date: stamp };
-  const commit = await gh(fetcher, `/repos/${ORG}/${name}/git/commits`, token, { method: 'POST', body: JSON.stringify({ message: 'Add synthetic feature-flag evidence', tree: tree.sha, author: who, committer: who }) });
-  await gh(fetcher, `/repos/${ORG}/${name}/git/refs`, token, { method: 'POST', body: JSON.stringify({ ref: 'refs/heads/main', sha: commit.sha }) });
+  const commit = await gh(fetcher, `/repos/${settings.org}/${name}/git/commits`, token, { method: 'POST', body: JSON.stringify({ message: 'Add synthetic feature-flag evidence', tree: tree.sha, author: who, committer: who }) });
+  await gh(fetcher, `/repos/${settings.org}/${name}/git/refs`, token, { method: 'POST', body: JSON.stringify({ ref: 'refs/heads/main', sha: commit.sha }) });
 }
 export async function recreate(fetcher, env, confirmation) {
-  requireConfirmation(confirmation); const t = tokensFor('recreate', env); assertScope();
-  await Promise.all([checkGithub(fetcher, t.GH_RESET_TOKEN), checkLaunchDarkly(fetcher, t.LD_RESET_TOKEN)]);
+  const settings = settingsFor(env); requireConfirmation(confirmation, settings.project); const t = tokensFor('recreate', env); assertScope({ ...settings });
+  await Promise.all([checkGithub(fetcher, t.GH_RESET_TOKEN, settings), checkLaunchDarkly(fetcher, t.LD_RESET_TOKEN, settings)]);
   const deleted = [];
-  for (const name of REPOS) deleted.push([name, await removeIfPresent(fetcher, GH, `/repos/${ORG}/${name}`, t.GH_RESET_TOKEN)]);
-  for (const key of FLAGS) deleted.push([key, await removeIfPresent(fetcher, LD, `/api/v2/flags/${PROJECT}/${key}`, t.LD_RESET_TOKEN)]);
-  for (const name of REPOS) await createRepositoryWithSource(fetcher, t.GH_RESET_TOKEN, name, SOURCES[name]);
-  for (const key of FLAGS) await ld(fetcher, `/api/v2/flags/${PROJECT}`, t.LD_RESET_TOKEN, { method: 'POST', body: JSON.stringify({ key, name: key, variations: [{ value: true }, { value: false }] }) });
+  for (const name of REPOS) deleted.push([name, await removeIfPresent(fetcher, GH, `/repos/${settings.org}/${name}`, t.GH_RESET_TOKEN)]);
+  for (const key of FLAGS) deleted.push([key, await removeIfPresent(fetcher, LD, `/api/v2/flags/${settings.project}/${key}`, t.LD_RESET_TOKEN)]);
+  for (const name of REPOS) await createRepositoryWithSource(fetcher, t.GH_RESET_TOKEN, settings, name, SOURCES[name]);
+  for (const key of FLAGS) await ld(fetcher, `/api/v2/flags/${settings.project}`, t.LD_RESET_TOKEN, { method: 'POST', body: JSON.stringify({ key, name: key, variations: [{ value: true }, { value: false }] }) });
   return deleted;
 }
 export async function destroy(fetcher, env, confirmation) {
-  requireConfirmation(confirmation); const t = tokensFor('destroy', env); assertScope(); const result = [];
-  for (const name of REPOS) result.push([name, await removeIfPresent(fetcher, GH, `/repos/${ORG}/${name}`, t.GH_RESET_TOKEN)]);
-  for (const key of FLAGS) result.push([key, await removeIfPresent(fetcher, LD, `/api/v2/flags/${PROJECT}/${key}`, t.LD_RESET_TOKEN)]);
+  const settings = settingsFor(env); requireConfirmation(confirmation, settings.project); const t = tokensFor('destroy', env); assertScope({ ...settings }); const result = [];
+  for (const name of REPOS) result.push([name, await removeIfPresent(fetcher, GH, `/repos/${settings.org}/${name}`, t.GH_RESET_TOKEN)]);
+  for (const key of FLAGS) result.push([key, await removeIfPresent(fetcher, LD, `/api/v2/flags/${settings.project}/${key}`, t.LD_RESET_TOKEN)]);
   return result;
 }
-export async function auditFlag(fetcher, token, key) {
-  const search = await gh(fetcher, `/search/code?q=${encodeURIComponent(`${key} org:${ORG}`)}&per_page=100`, token);
+export async function auditFlag(fetcher, token, settings, key) {
+  const search = await gh(fetcher, `/search/code?q=${encodeURIComponent(`${key} org:${settings.org}`)}&per_page=100`, token);
   if (!search || search.incomplete_results || !Array.isArray(search.items) || search.total_count > search.items.length) return { files: [], complete: false, capped: true };
   const files = [];
   for (const item of search.items) {
     const repo = item.repository?.name;
-    if (!REPOS.includes(repo) || item.repository?.owner?.login !== ORG) continue;
-    const info = await gh(fetcher, `/repos/${ORG}/${repo}`, token); const branch = info.default_branch;
-    const content = await gh(fetcher, `/repos/${ORG}/${repo}/contents/${item.path}?ref=${encodeURIComponent(branch)}`, token);
+    if (!REPOS.includes(repo) || item.repository?.owner?.login !== settings.org) continue;
+    const info = await gh(fetcher, `/repos/${settings.org}/${repo}`, token); const branch = info.default_branch;
+    const content = await gh(fetcher, `/repos/${settings.org}/${repo}/contents/${item.path}?ref=${encodeURIComponent(branch)}`, token);
     const decoded = Buffer.from(content.content || '', 'base64').toString('utf8');
     if (!decoded.includes(key)) continue;
-    const commits = await gh(fetcher, `/repos/${ORG}/${repo}/commits?path=${encodeURIComponent(item.path)}&sha=${encodeURIComponent(branch)}&per_page=1`, token);
+    const commits = await gh(fetcher, `/repos/${settings.org}/${repo}/commits?path=${encodeURIComponent(item.path)}&sha=${encodeURIComponent(branch)}&per_page=1`, token);
     if (!Array.isArray(commits) || !commits[0]?.commit?.committer?.date) return { files: [], complete: false, malformed: true };
     files.push({ repo, path: item.path, commit: commits[0].commit.committer.date });
   }
   return { files, complete: true };
 }
 export async function run(fetcher, env) {
-  const t = tokensFor('run', env); await checkLaunchDarkly(fetcher, t.LD_DEMO_TOKEN);
-  const listed = await ld(fetcher, `/api/v2/flags/${PROJECT}?limit=100`, t.LD_DEMO_TOKEN);
+  const t = tokensFor('run', env); const settings = settingsFor(env); assertScope({ ...settings }); await checkLaunchDarkly(fetcher, t.LD_DEMO_TOKEN, settings);
+  const listed = await ld(fetcher, `/api/v2/flags/${settings.project}?limit=100`, t.LD_DEMO_TOKEN);
   if (!Array.isArray(listed.items)) throw new Error('Malformed LaunchDarkly flag evidence.');
   const rows = [];
-  for (const flag of listed.items.filter((f) => FLAGS.includes(f.key))) { let evidence; try { evidence = await auditFlag(fetcher, t.GH_DEMO_TOKEN, flag.key); } catch { evidence = { files: [], complete: false, error: true }; }
+  for (const flag of listed.items.filter((f) => FLAGS.includes(f.key))) { let evidence; try { evidence = await auditFlag(fetcher, t.GH_DEMO_TOKEN, settings, flag.key); } catch { evidence = { files: [], complete: false, error: true }; }
     rows.push({ key: flag.key, files: evidence.files || [], result: outcome(evidence) }); }
   return rows;
 }
