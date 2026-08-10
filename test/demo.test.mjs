@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, GH, request, doctor, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, redact } from '../lib.mjs';
+import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, GH, LD, request, doctor, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, redact } from '../lib.mjs';
 
 const env = { GH_ORG: 'example-demo-org', LD_PROJECT_KEY: 'example-demo-project', GH_RESET_TOKEN: 'gh-reset-secret', GH_DEMO_TOKEN: 'gh-demo-secret', LD_RESET_TOKEN: 'ld-reset-secret', LD_DEMO_TOKEN: 'ld-demo-secret' };
 test('fixed scope rejects another organization, project, repository, or flag', () => {
@@ -38,6 +38,12 @@ test('tokens never appear in redacted output or errors', () => {
 test('mocked HTTP responses reject an unexpected origin', async () => {
   const fetcher = async () => ({ ok: true, status: 200, url: 'https://example.invalid/response', json: async () => ({}) });
   await assert.rejects(() => request(fetcher, GH, '/user', 'not-a-real-token'), /expected official origin/);
+});
+test('mocked requests use each API provider’s required authorization form', async () => {
+  const headers = [];
+  const fetcher = async (url, options) => { headers.push(options.headers); return { ok: true, status: 200, url: String(url), json: async () => ({}) }; };
+  await request(fetcher, GH, '/user', 'github-secret'); await request(fetcher, LD, '/api/v2/projects/example-demo-project', 'launchdarkly-secret');
+  assert.equal(headers[0].Authorization, 'Bearer github-secret'); assert.equal(headers[1].Authorization, 'launchdarkly-secret');
 });
 test('doctor identifies a failed token check without exposing its value', async () => {
   const fetcher = async () => ({ ok: false, status: 401, url: 'https://api.github.com/user', json: async () => ({}) });

@@ -6,7 +6,7 @@ The configured containers are GitHub organization `GH_ORG` and LaunchDarkly proj
 
 ## Tokens
 
-Exactly four secrets are read from the environment: `GH_RESET_TOKEN`, `GH_DEMO_TOKEN`, `LD_RESET_TOKEN`, and `LD_DEMO_TOKEN`. `GH_ORG` and `LD_PROJECT_KEY` are required non-secret configuration values. Tokens are never command arguments, URLs, remotes, fixtures, output, or error text. `doctor` requires all four secrets and both configuration values. `run` reads only demo tokens. `recreate` and `destroy` read only reset tokens, and never substitute a reset token when a demo token is absent.
+Exactly four secrets are read from the environment: `GH_RESET_TOKEN`, `GH_DEMO_TOKEN`, `LD_RESET_TOKEN`, and `LD_DEMO_TOKEN`. `GH_ORG` and `LD_PROJECT_KEY` are required non-secret configuration values. Tokens are never command arguments, URLs, remotes, fixtures, output, or error text. GitHub requests use `Authorization: Bearer <token>`; LaunchDarkly REST requests use `Authorization: <token>`. `doctor` requires all four secrets and both configuration values. `run` reads only demo tokens. `recreate` and `destroy` read only reset tokens, and never substitute a reset token when a demo token is absent.
 
 Create the GitHub reset fine-grained PAT for resource owner `GH_ORG`, all organization repositories, Administration read/write, Contents read/write, and Metadata read (normally automatic), with short expiration. Create a separate demo PAT for the same owner and repositories with Contents read-only and Metadata read, also short-lived. The organization must allow members/tokens to create and delete organization repositories; GitHub Administration write is required for those operations.
 

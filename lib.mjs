@@ -45,7 +45,8 @@ function checkedUrl(path, base) {
 }
 export async function request(fetcher, base, path, token, options = {}) {
   const url = checkedUrl(path, base);
-  const response = await fetcher(url, { ...options, headers: { Accept: 'application/json', Authorization: `Bearer ${token}`, ...(base === GH ? { 'X-GitHub-Api-Version': '2022-11-28' } : { 'LD-API-Version': '20240415' }), ...(options.headers || {}) } });
+  const authorization = base === GH ? `Bearer ${token}` : token;
+  const response = await fetcher(url, { ...options, headers: { Accept: 'application/json', Authorization: authorization, ...(base === GH ? { 'X-GitHub-Api-Version': '2022-11-28' } : { 'LD-API-Version': '20240415' }), ...(options.headers || {}) } });
   const responseOrigin = new URL(response.url || url).origin;
   if (responseOrigin !== url.origin) throw new Error('API response did not come from the expected official origin.');
   const body = await response.json().catch(() => null);
