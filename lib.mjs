@@ -46,11 +46,16 @@ function checkedUrl(path, base) {
 export async function request(fetcher, base, path, token, options = {}) {
   const url = checkedUrl(path, base);
   const authorization = base === GH ? `Bearer ${token}` : token;
-  const response = await fetcher(url, { ...options, headers: { Accept: 'application/json', Authorization: authorization, ...(base === GH ? { 'X-GitHub-Api-Version': '2022-11-28' } : { 'LD-API-Version': '20240415' }), ...(options.headers || {}) } });
+  const headers = { Accept: 'application/json', Authorization: authorization, ...(base === GH ? { 'X-GitHub-Api-Version': '2022-11-28' } : { 'LD-API-Version': '20240415' }), ...(options.headers || {}) };
+  if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+  const response = await fetcher(url, { ...options, headers });
   const responseOrigin = new URL(response.url || url).origin;
   if (responseOrigin !== url.origin) throw new Error('API response did not come from the expected official origin.');
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(`API request failed (${response.status}).`);
+  if (!response.ok) {
+    const message = typeof body?.message === 'string' ? redact(body.message, [token]).slice(0, 300) : '';
+    throw new Error(`API request failed (${response.status})${message ? `: ${message}` : '.'}`);
+  }
   return body;
 }
 const gh = (fetcher, path, token, options) => request(fetcher, GH, path, token, options);
@@ -84,9 +89,18 @@ export async function doctor(fetcher, env) {
   }
   return rows;
 }
-export async function removeIfPresent(fetcher, base, path, token) {
+export async function removeIfPresent(fetcher, base, path, token, label) {
   try { await request(fetcher, base, path, token, { method: 'DELETE' }); return 'deleted'; }
-  catch (error) { if (/\(404\)/.test(error.message)) return 'already absent'; throw error; }
+  catch (error) { if (/\(404\)/.test(error.message)) return 'already absent'; throw new Error(`${label} failed: ${error.message}`); }
+}
+export async function waitForRepositoryAbsence(fetcher, token, settings, name, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+  const label = `GH_RESET_TOKEN wait for repository removal ${settings.org}/${name}`;
+  for (let attempt = 1; attempt <= 10; attempt += 1) {
+    try { await gh(fetcher, `/repos/${settings.org}/${name}`, token); }
+    catch (error) { if (/\(404\)/.test(error.message)) return; throw new Error(`${label} failed: ${error.message}`); }
+    if (attempt < 10) await sleep(1000);
+  }
+  throw new Error(`${label} failed: repository still exists after 10 seconds.`);
 }
 export const SOURCES = {
   'demo-orders': { path: 'src/checkout.js', content: "export const checkoutFlag = 'demo-checkout-rollout';\n", date: null },
@@ -95,28 +109,37 @@ export const SOURCES = {
 };
 export async function createRepositoryWithSource(fetcher, token, settings, name, source) {
   assertScope({ ...settings, repos: [name, ...REPOS.filter((x) => x !== name)] });
-  await gh(fetcher, `/orgs/${settings.org}/repos`, token, { method: 'POST', body: JSON.stringify({ name, private: false, auto_init: false, description: 'Synthetic feature-flag clean-room demo.' }) });
+  const repository = await gh(fetcher, `/orgs/${settings.org}/repos`, token, { method: 'POST', body: JSON.stringify({ name, private: false, auto_init: true, description: 'Synthetic feature-flag clean-room demo.' }) });
+  const branch = repository.default_branch;
+  if (!branch) throw new Error('Created repository has no default branch.');
+  const ref = await gh(fetcher, `/repos/${settings.org}/${name}/git/ref/heads/${encodeURIComponent(branch)}`, token);
+  const parentSha = ref.object?.sha;
+  if (!parentSha) throw new Error('Created repository has no initial commit reference.');
+  const parent = await gh(fetcher, `/repos/${settings.org}/${name}/git/commits/${parentSha}`, token);
+  if (!parent.tree?.sha) throw new Error('Created repository has incomplete initial commit evidence.');
   const blob = await gh(fetcher, `/repos/${settings.org}/${name}/git/blobs`, token, { method: 'POST', body: JSON.stringify({ content: source.content, encoding: 'utf-8' }) });
-  const tree = await gh(fetcher, `/repos/${settings.org}/${name}/git/trees`, token, { method: 'POST', body: JSON.stringify({ tree: [{ path: source.path, mode: '100644', type: 'blob', sha: blob.sha }] }) });
+  const tree = await gh(fetcher, `/repos/${settings.org}/${name}/git/trees`, token, { method: 'POST', body: JSON.stringify({ base_tree: parent.tree.sha, tree: [{ path: source.path, mode: '100644', type: 'blob', sha: blob.sha }] }) });
   const stamp = source.date || new Date().toISOString();
   const who = { name: 'Synthetic Demo', email: 'synthetic-demo@example.invalid', date: stamp };
-  const commit = await gh(fetcher, `/repos/${settings.org}/${name}/git/commits`, token, { method: 'POST', body: JSON.stringify({ message: 'Add synthetic feature-flag evidence', tree: tree.sha, author: who, committer: who }) });
-  await gh(fetcher, `/repos/${settings.org}/${name}/git/refs`, token, { method: 'POST', body: JSON.stringify({ ref: 'refs/heads/main', sha: commit.sha }) });
+  const commit = await gh(fetcher, `/repos/${settings.org}/${name}/git/commits`, token, { method: 'POST', body: JSON.stringify({ message: 'Add synthetic feature-flag evidence', tree: tree.sha, parents: [parentSha], author: who, committer: who }) });
+  await gh(fetcher, `/repos/${settings.org}/${name}/git/refs/heads/${encodeURIComponent(branch)}`, token, { method: 'PATCH', body: JSON.stringify({ sha: commit.sha, force: false }) });
 }
 export async function recreate(fetcher, env, confirmation) {
   const settings = settingsFor(env); requireConfirmation(confirmation, settings.project); const t = tokensFor('recreate', env); assertScope({ ...settings });
-  await Promise.all([checkGithub(fetcher, t.GH_RESET_TOKEN, settings), checkLaunchDarkly(fetcher, t.LD_RESET_TOKEN, settings)]);
+  try { await checkGithub(fetcher, t.GH_RESET_TOKEN, settings); } catch (error) { throw new Error(`GH_RESET_TOKEN GitHub authentication/read access failed: ${error.message}`); }
+  try { await checkLaunchDarkly(fetcher, t.LD_RESET_TOKEN, settings); } catch (error) { throw new Error(`LD_RESET_TOKEN LaunchDarkly authentication/project access failed: ${error.message}`); }
   const deleted = [];
-  for (const name of REPOS) deleted.push([name, await removeIfPresent(fetcher, GH, `/repos/${settings.org}/${name}`, t.GH_RESET_TOKEN)]);
-  for (const key of FLAGS) deleted.push([key, await removeIfPresent(fetcher, LD, `/api/v2/flags/${settings.project}/${key}`, t.LD_RESET_TOKEN)]);
-  for (const name of REPOS) await createRepositoryWithSource(fetcher, t.GH_RESET_TOKEN, settings, name, SOURCES[name]);
-  for (const key of FLAGS) await ld(fetcher, `/api/v2/flags/${settings.project}`, t.LD_RESET_TOKEN, { method: 'POST', body: JSON.stringify({ key, name: key, variations: [{ value: true }, { value: false }] }) });
+  for (const name of REPOS) deleted.push([name, await removeIfPresent(fetcher, GH, `/repos/${settings.org}/${name}`, t.GH_RESET_TOKEN, `GH_RESET_TOKEN delete repository ${settings.org}/${name}`)]);
+  for (const key of FLAGS) deleted.push([key, await removeIfPresent(fetcher, LD, `/api/v2/flags/${settings.project}/${key}`, t.LD_RESET_TOKEN, `LD_RESET_TOKEN delete flag ${settings.project}/${key}`)]);
+  for (const name of REPOS) await waitForRepositoryAbsence(fetcher, t.GH_RESET_TOKEN, settings, name);
+  for (const name of REPOS) try { await createRepositoryWithSource(fetcher, t.GH_RESET_TOKEN, settings, name, SOURCES[name]); } catch (error) { throw new Error(`GH_RESET_TOKEN provision repository ${settings.org}/${name} failed: ${error.message}`); }
+  for (const key of FLAGS) try { await ld(fetcher, `/api/v2/flags/${settings.project}`, t.LD_RESET_TOKEN, { method: 'POST', body: JSON.stringify({ key, name: key, variations: [{ value: true }, { value: false }] }) }); } catch (error) { throw new Error(`LD_RESET_TOKEN create flag ${settings.project}/${key} failed: ${error.message}`); }
   return deleted;
 }
 export async function destroy(fetcher, env, confirmation) {
   const settings = settingsFor(env); requireConfirmation(confirmation, settings.project); const t = tokensFor('destroy', env); assertScope({ ...settings }); const result = [];
-  for (const name of REPOS) result.push([name, await removeIfPresent(fetcher, GH, `/repos/${settings.org}/${name}`, t.GH_RESET_TOKEN)]);
-  for (const key of FLAGS) result.push([key, await removeIfPresent(fetcher, LD, `/api/v2/flags/${settings.project}/${key}`, t.LD_RESET_TOKEN)]);
+  for (const name of REPOS) result.push([name, await removeIfPresent(fetcher, GH, `/repos/${settings.org}/${name}`, t.GH_RESET_TOKEN, `GH_RESET_TOKEN delete repository ${settings.org}/${name}`)]);
+  for (const key of FLAGS) result.push([key, await removeIfPresent(fetcher, LD, `/api/v2/flags/${settings.project}/${key}`, t.LD_RESET_TOKEN, `LD_RESET_TOKEN delete flag ${settings.project}/${key}`)]);
   return result;
 }
 export async function auditFlag(fetcher, token, settings, key) {

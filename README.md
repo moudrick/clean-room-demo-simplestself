@@ -14,3 +14,5 @@ node demo.mjs destroy --confirm <your-LD_PROJECT_KEY-value>
 ```
 
 `recreate` and `destroy` require the exact confirmation and use reset tokens only. `run` uses demo tokens only. See [SPEC.md](SPEC.md) for normative behavior and limitations.
+
+After deleting a disposable GitHub repository, `recreate` waits for it to become absent from the API before recreating it (at most ten seconds).
