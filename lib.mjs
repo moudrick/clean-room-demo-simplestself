@@ -29,7 +29,7 @@ export function tokensFor(command, env) {
 export function redact(value, secrets = []) {
   let text = String(value?.message || value || 'request failed');
   for (const secret of secrets.filter(Boolean)) text = text.split(secret).join('[REDACTED]');
-  return text.replace(/(token|authorization)=?[^\s,]*/ig, '$1=[REDACTED]');
+  return text.replace(/\b(token|authorization)\s*=\s*[^\s,]+/ig, '$1=[REDACTED]');
 }
 export function outcome(evidence, staleBefore = '2023-01-01T00:00:00.000Z') {
   if (!evidence || !evidence.complete || evidence.error || evidence.capped || evidence.malformed) return 'UNKNOWN';
@@ -70,8 +70,18 @@ export async function checkLaunchDarkly(fetcher, token, settings) {
 }
 export async function doctor(fetcher, env) {
   const t = tokensFor('doctor', env); const settings = settingsFor(env); assertScope({ ...settings });
-  const [gDemo, gReset, lDemo, lReset] = await Promise.all([checkGithub(fetcher, t.GH_DEMO_TOKEN, settings), checkGithub(fetcher, t.GH_RESET_TOKEN, settings), checkLaunchDarkly(fetcher, t.LD_DEMO_TOKEN, settings), checkLaunchDarkly(fetcher, t.LD_RESET_TOKEN, settings)]);
-  return [['GH_DEMO_TOKEN', gDemo], ['GH_RESET_TOKEN', gReset], ['LD_DEMO_TOKEN', lDemo], ['LD_RESET_TOKEN', lReset]];
+  const checks = [
+    ['GH_DEMO_TOKEN', 'GitHub authentication/read access', () => checkGithub(fetcher, t.GH_DEMO_TOKEN, settings)],
+    ['GH_RESET_TOKEN', 'GitHub authentication/read access', () => checkGithub(fetcher, t.GH_RESET_TOKEN, settings)],
+    ['LD_DEMO_TOKEN', 'LaunchDarkly authentication/project access', () => checkLaunchDarkly(fetcher, t.LD_DEMO_TOKEN, settings)],
+    ['LD_RESET_TOKEN', 'LaunchDarkly authentication/project access', () => checkLaunchDarkly(fetcher, t.LD_RESET_TOKEN, settings)]
+  ];
+  const rows = [];
+  for (const [name, checkType, check] of checks) {
+    try { rows.push([name, await check()]); }
+    catch (error) { throw new Error(`${name} ${checkType} failed: ${error.message}`); }
+  }
+  return rows;
 }
 export async function removeIfPresent(fetcher, base, path, token) {
   try { await request(fetcher, base, path, token, { method: 'DELETE' }); return 'deleted'; }

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, GH, request, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, redact } from '../lib.mjs';
+import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, GH, request, doctor, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, redact } from '../lib.mjs';
 
 const env = { GH_ORG: 'example-demo-org', LD_PROJECT_KEY: 'example-demo-project', GH_RESET_TOKEN: 'gh-reset-secret', GH_DEMO_TOKEN: 'gh-demo-secret', LD_RESET_TOKEN: 'ld-reset-secret', LD_DEMO_TOKEN: 'ld-demo-secret' };
 test('fixed scope rejects another organization, project, repository, or flag', () => {
@@ -33,8 +33,13 @@ test('specification constants agree with implementation constants', () => {
 test('tokens never appear in redacted output or errors', () => {
   const message = redact(new Error(`failed ${env.GH_RESET_TOKEN} Authorization=${env.LD_DEMO_TOKEN}`), Object.values(env));
   for (const token of Object.values(env)) assert.equal(message.includes(token), false);
+  assert.equal(redact('GH_DEMO_TOKEN authentication failed', Object.values(env)), 'GH_DEMO_TOKEN authentication failed');
 });
 test('mocked HTTP responses reject an unexpected origin', async () => {
   const fetcher = async () => ({ ok: true, status: 200, url: 'https://example.invalid/response', json: async () => ({}) });
   await assert.rejects(() => request(fetcher, GH, '/user', 'not-a-real-token'), /expected official origin/);
+});
+test('doctor identifies a failed token check without exposing its value', async () => {
+  const fetcher = async () => ({ ok: false, status: 401, url: 'https://api.github.com/user', json: async () => ({}) });
+  await assert.rejects(() => doctor(fetcher, env), (error) => error.message.includes('GH_DEMO_TOKEN GitHub authentication/read access failed: API request failed (401).') && !error.message.includes(env.GH_DEMO_TOKEN));
 });
