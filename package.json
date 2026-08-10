@@ -1,0 +1,6 @@
+{
+  "name": "clean-room-demo-simplestself",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}
