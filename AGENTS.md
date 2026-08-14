@@ -39,13 +39,14 @@ The configured containers are set in ignored local `.env`:
 - GitHub organization: `GH_ORG`
 - LaunchDarkly project: `LD_PROJECT_KEY`
 
-Only the repositories and flags enumerated in `SPEC.md` are disposable. Destructive operations
-must retain the exact confirmation requirement and reject every identifier outside that list.
+Only the repositories enumerated in `SPEC.md` and the configured non-default LaunchDarkly project
+are disposable. Destructive operations must retain the exact confirmation requirement and reject
+every identifier outside that scope.
 
 ## Credentials and external operations
 
-- Keep the four-token separation defined in `SPEC.md`; never fall back from a missing demo token to
-  a reset token.
+- Keep the four-management-token separation and evaluator-SDK-key boundary defined in `SPEC.md`;
+  never fall back from a missing demo token to a reset token.
 - Tokens belong only in the ignored local `.env`. Never print, log, commit, persist, or put them in
   command arguments, URLs, Git remotes, fixtures, or error text.
 - Tests must use mocks and must not contact external services.
