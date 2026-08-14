@@ -43,22 +43,6 @@ services:
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
     command: ["npm", "run", "traffic", "--", "--profile", "production"]
 
-  orders-test:
-    <<: *orders
-    environment:
-      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_TEST:?missing test SDK key}
-    command: ["npm", "run", "traffic", "--", "--profile", "test"]
-  storefront-test:
-    <<: *storefront
-    environment:
-      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_TEST:?missing test SDK key}
-    command: ["npm", "run", "traffic", "--", "--profile", "test"]
-  profile-test:
-    <<: *profile
-    environment:
-      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_TEST:?missing test SDK key}
-    command: ["npm", "run", "traffic", "--", "--profile", "test"]
-
   orders-staging:
     <<: *orders
     environment:
@@ -74,6 +58,22 @@ services:
     environment:
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_STAGING:?missing staging SDK key}
     command: ["npm", "run", "traffic", "--", "--profile", "staging"]
+
+  orders-test:
+    <<: *orders
+    environment:
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_TEST:?missing test SDK key}
+    command: ["npm", "run", "traffic", "--", "--profile", "test"]
+  storefront-test:
+    <<: *storefront
+    environment:
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_TEST:?missing test SDK key}
+    command: ["npm", "run", "traffic", "--", "--profile", "test"]
+  profile-test:
+    <<: *profile
+    environment:
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_TEST:?missing test SDK key}
+    command: ["npm", "run", "traffic", "--", "--profile", "test"]
 
   orders-dev:
     <<: *orders

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, destroy, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, redact } from '../lib.mjs';
+import { spawnSync } from 'node:child_process';
+import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact } from '../lib.mjs';
 
 const env = { GH_ORG: 'example-demo-org', LD_PROJECT_KEY: 'example-demo-project', GH_RESET_TOKEN: 'gh-reset-secret', GH_DEMO_TOKEN: 'gh-demo-secret', LD_RESET_TOKEN: 'ld-reset-secret', LD_DEMO_TOKEN: 'ld-demo-secret' };
 test('fixed scope rejects another organization, project, repository, flag, or environment set', () => {
@@ -16,9 +17,10 @@ test('organization and project must come from required non-secret environment se
   assert.throws(() => settingsFor({ ...env, GH_ORG: '' })); assert.throws(() => settingsFor({ ...env, LD_PROJECT_KEY: 'project/key' }));
 });
 test('demo commands cannot access reset tokens and reset cannot fall back', () => {
-  assert.deepEqual(Object.keys(tokensFor('run', env)).sort(), ['GH_DEMO_TOKEN', 'LD_DEMO_TOKEN']);
+  assert.deepEqual(Object.keys(tokensFor('audit', env)).sort(), ['GH_DEMO_TOKEN', 'LD_DEMO_TOKEN']);
   assert.deepEqual(Object.keys(tokensFor('recreate', env)).sort(), ['GH_RESET_TOKEN', 'LD_RESET_TOKEN']);
   assert.throws(() => tokensFor('recreate', { GH_DEMO_TOKEN: 'x', LD_DEMO_TOKEN: 'y' }));
+  assert.throws(() => tokensFor('run', env), /Unknown command/); assert.throws(() => tokensFor('unknown', env), /Unknown command/);
 });
 test('destructive commands require exact configured-project confirmation', () => { assert.throws(() => requireConfirmation('wrong', env.LD_PROJECT_KEY)); assert.doesNotThrow(() => requireConfirmation(env.LD_PROJECT_KEY, env.LD_PROJECT_KEY)); });
 test('failed or incomplete evidence cannot become stale or dead', () => {
@@ -29,8 +31,14 @@ test('specification constants agree with implementation constants', () => {
   const spec = fs.readFileSync(new URL('../SPEC.md', import.meta.url), 'utf8');
   assert.equal(ORG_ENV, 'GH_ORG'); assert.equal(PROJECT_ENV, 'LD_PROJECT_KEY');
   assert.deepEqual(REPOS, ['demo-orders', 'demo-storefront', 'demo-profile']); assert.deepEqual(FLAGS, ['demo-checkout-rollout', 'demo-legacy-profile', 'demo-retired-banner']);
-  assert.deepEqual(ENVIRONMENTS.map((environment) => environment.key), ['production', 'test', 'staging', 'dev']);
+  assert.deepEqual(ENVIRONMENTS.map((environment) => environment.key), ['production', 'staging', 'test', 'dev']);
+  assert.deepEqual(ENVIRONMENTS.map((environment) => environment.critical), [true, true, false, false]);
   for (const value of [ORG_ENV, PROJECT_ENV, ...REPOS, ...FLAGS, ...ENVIRONMENTS.map((environment) => environment.key)]) assert.equal(spec.includes(value), true);
+});
+test('recreate progress renders a fixed sanitized bar', () => {
+  assert.equal(progressLine({ completed: 3, total: 15, label: 'Creating\nrepositories' }), '[####----------------] 3/15 Creating repositories');
+  assert.equal(progressLine({ completed: 15, total: 15, label: 'Recreate complete' }), '[####################] 15/15 Recreate complete');
+  assert.throws(() => progressLine({ completed: 16, total: 15, label: 'invalid' }), /Invalid progress/);
 });
 test('tokens never appear in redacted output or errors', () => {
   const message = redact(new Error(`failed ${env.GH_RESET_TOKEN} Authorization=${env.LD_DEMO_TOKEN}`), Object.values(env));
@@ -53,6 +61,22 @@ test('every request retries 429 after Retry-After before succeeding', async () =
   const result = await request(fetcher, LD, '/api/v2/projects', env.LD_RESET_TOKEN, {}, { sleep: async (delay) => delays.push(delay), random: () => 0 });
   assert.deepEqual(result, { ok: true }); assert.equal(attempts, 2); assert.deepEqual(delays, [2000]);
 });
+test('rate-limit progress reports bounded countdown chunks before sleeping', async () => {
+  let attempts = 0; const sequence = [];
+  const fetcher = async (url) => { attempts += 1; return attempts === 1
+    ? { ok: false, status: 429, url: String(url), headers: { 'Retry-After': '0.025' }, json: async () => ({}) }
+    : { ok: true, status: 200, url: String(url), headers: {}, json: async () => ({ ok: true }) }; };
+  await request(fetcher, LD, '/api/v2/projects', env.LD_RESET_TOKEN, {}, {
+    random: () => 0,
+    rateLimitTickMs: 10,
+    onRateLimit: async (event) => sequence.push(['progress', event]),
+    sleep: async (delay) => sequence.push(['sleep', delay])
+  });
+  assert.deepEqual(sequence.map(([kind]) => kind), ['progress', 'sleep', 'progress', 'sleep', 'progress', 'sleep']);
+  assert.deepEqual(sequence.filter(([kind]) => kind === 'sleep').map(([, delay]) => delay), [10, 10, 5]);
+  assert.deepEqual(sequence.filter(([kind]) => kind === 'progress').map(([, event]) => event.remainingMs), [25, 15, 5]);
+  for (const [, event] of sequence.filter(([kind]) => kind === 'progress')) assert.deepEqual({ provider: event.provider, status: event.status, retry: event.retry, maxRetries: event.maxRetries }, { provider: 'LaunchDarkly', status: 429, retry: 1, maxRetries: 5 });
+});
 test('rate-limit reset headers use each provider epoch unit', () => {
   assert.equal(rateLimitDelayMs({ headers: { 'X-RateLimit-Reset': '5000' } }, LD, 0, () => 1000, () => 0), 4000);
   assert.equal(rateLimitDelayMs({ headers: { 'X-RateLimit-Reset': '5' } }, GH, 0, () => 1000, () => 0), 4000);
@@ -74,9 +98,9 @@ test('rate-limit retry count is bounded', async () => {
   assert.equal(attempts, 3);
 });
 test('rate-limit waits above the local cap fail without retrying early', async () => {
-  let attempts = 0; const fetcher = async (url) => { attempts += 1; return { ok: false, status: 429, url: String(url), headers: { 'Retry-After': '301' }, json: async () => ({}) }; };
-  await assert.rejects(() => request(fetcher, LD, '/api/v2/projects', env.LD_RESET_TOKEN, {}, { sleep: async () => assert.fail('must not sleep'), random: () => 0 }), /five-minute local cap/);
-  assert.equal(attempts, 1);
+  let attempts = 0; let progress = 0; const fetcher = async (url) => { attempts += 1; return { ok: false, status: 429, url: String(url), headers: { 'Retry-After': '301' }, json: async () => ({}) }; };
+  await assert.rejects(() => request(fetcher, LD, '/api/v2/projects', env.LD_RESET_TOKEN, {}, { sleep: async () => assert.fail('must not sleep'), onRateLimit: async () => { progress += 1; }, random: () => 0 }), /five-minute local cap/);
+  assert.equal(attempts, 1); assert.equal(progress, 0);
 });
 test('mocked requests use each API provider’s required authorization form', async () => {
   const headers = [];
@@ -87,6 +111,11 @@ test('mocked requests use each API provider’s required authorization form', as
 test('doctor identifies a failed token check without exposing its value', async () => {
   const fetcher = async () => ({ ok: false, status: 401, url: 'https://api.github.com/user', json: async () => ({}) });
   await assert.rejects(() => doctor(fetcher, env), (error) => error.message.includes('GH_DEMO_TOKEN GitHub authentication/read access failed: API request failed (401).') && !error.message.includes(env.GH_DEMO_TOKEN));
+});
+test('failed recreate never reports completion', async () => {
+  const progress = []; const fetcher = async (url) => ({ ok: false, status: 401, url: String(url), headers: {}, json: async () => ({}) });
+  await assert.rejects(() => recreate(fetcher, env, env.LD_PROJECT_KEY, { onProgress: async (event) => progress.push(event) }), /GH_RESET_TOKEN/);
+  assert.deepEqual(progress.map((event) => event.completed), [0]); assert.equal(progress.some((event) => event.label === 'Recreate complete'), false);
 });
 test('LaunchDarkly project-list check requests a bounded result set', async () => {
   const calls = []; const fetcher = async (url) => { calls.push(String(url)); return { ok: true, status: 200, url: String(url), json: async () => ({ items: [] }) }; };
@@ -127,19 +156,36 @@ test('generated evaluators own only the active flags and flush their evaluations
   const source = (repo) => SOURCES[repo].files.find((file) => file.path === 'app.mjs').content;
   assert.match(source('demo-orders'), /demo-checkout-rollout/); assert.match(source('demo-storefront'), /demo-checkout-rollout/);
   assert.match(source('demo-profile'), /demo-legacy-profile/); assert.equal(source('demo-orders').includes('demo-retired-banner') || source('demo-storefront').includes('demo-retired-banner') || source('demo-profile').includes('demo-retired-banner'), false);
-  for (const repo of REPOS) assert.match(source(repo), /await client\.flush\(\)/);
+  for (const repo of REPOS) {
+    assert.match(source(repo), /await client\.flush\(\)/); assert.match(source(repo), /evaluations: 10/); assert.match(source(repo), /contextForOneShot/); assert.match(source(repo), /index < options\.evaluations/);
+    assert.match(SOURCES[repo].files.find((file) => file.path === 'Dockerfile').content, /ENV NPM_CONFIG_UPDATE_NOTIFIER=false/);
+    const parsed = spawnSync(process.execPath, ['--input-type=module', '--check'], { input: source(repo), encoding: 'utf8' });
+    assert.equal(parsed.status, 0, parsed.stderr);
+  }
 });
-test('generated traffic profiles deterministically exercise targeting and quiet/busy volume', async () => {
+test('generated one-shot and traffic contexts have deterministic volume, targeting, and instances', async () => {
   const source = SOURCES['demo-orders'].files.find((file) => file.path === 'traffic.mjs').content;
   const traffic = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
-  const trueCounts = {};
+  const checkoutTrue = {}; const legacyTrue = {}; const instances = {};
   for (const profile of ENVIRONMENTS.map((environment) => environment.key)) {
-    const contexts = Array.from({ length: 100 }, (_, index) => traffic.contextForTraffic('demo-orders', profile, index));
-    trueCounts[profile] = contexts.filter((context) => context.plan === 'enterprise' || context.cohort === 'checkout-beta').length;
+    const checkout = Array.from({ length: 100 }, (_, index) => traffic.contextForTraffic('demo-orders', profile, index));
+    const legacy = Array.from({ length: 100 }, (_, index) => traffic.contextForTraffic('demo-profile', profile, index));
+    checkoutTrue[profile] = checkout.filter((context) => context.plan === 'enterprise' || context.cohort === 'checkout-beta').length;
+    legacyTrue[profile] = legacy.filter((context) => context.region === 'legacy').length;
+    instances[profile] = Object.fromEntries([...new Set(checkout.map((context) => context.instance))].map((instance) => [instance, checkout.filter((context) => context.instance === instance).length]));
   }
-  assert.equal(new Set(Object.values(trueCounts)).size, ENVIRONMENTS.length);
-  assert.equal(traffic.batchSize('production', new Date('2026-08-17T10:00:00Z')), 4);
-  assert.equal(traffic.batchSize('production', new Date('2026-08-16T10:00:00Z')), 1);
+  assert.deepEqual(checkoutTrue, { production: 25, staging: 50, test: 65, dev: 40 });
+  assert.deepEqual(legacyTrue, { production: 8, staging: 20, test: 30, dev: 12 });
+  assert.deepEqual(instances.production, { WestEU1: 50, EMEA4: 30, SouthAM2: 20 });
+  assert.deepEqual(instances.staging, { STG1: 67, STG2: 33 }); assert.deepEqual(instances.test, { TEST1: 50, TEST2: 50 }); assert.deepEqual(instances.dev, { DEV1: 100 });
+  const busy = new Date('2026-08-17T10:00:00Z'); const quiet = new Date('2026-08-16T10:00:00Z');
+  assert.deepEqual(ENVIRONMENTS.map(({ key }) => traffic.batchSize(key, busy)), [100, 30, 10, 2]);
+  assert.deepEqual(ENVIRONMENTS.map(({ key }) => traffic.batchSize(key, quiet)), [40, 12, 4, 1]);
+  const options = { contextKey: 'demo-user', plan: 'enterprise', region: 'eu', cohort: 'control', instance: 'DEMO1', evaluations: 10 };
+  const oneShot = Array.from({ length: options.evaluations }, (_, index) => traffic.contextForOneShot('demo-orders', options, index));
+  assert.equal(new Set(oneShot.map((context) => context.key)).size, 10); assert.equal(oneShot[0].key, 'demo-user-001'); assert.equal(oneShot.at(-1).key, 'demo-user-010');
+  assert.equal(oneShot.every((context) => context.instance === 'DEMO1' && context.plan === 'enterprise'), true);
+  assert.equal(traffic.contextForOneShot('demo-orders', { ...options, evaluations: 1 }, 0).key, 'demo-user');
 });
 test('runtime preparation writes ignored SDK keys and clones only exact public repositories', async () => {
   const writes = []; const clones = []; const operations = [];
@@ -148,6 +194,7 @@ test('runtime preparation writes ignored SDK keys and clones only exact public r
   await prepareRuntime(settingsFor(env), environments, { root: process.cwd(), fileSystem, clone: async (url, target) => clones.push({ url, target }) });
   assert.equal(writes.length, 1); assert.match(writes[0][0], /runtime[\\/]sdk-keys\.env$/);
   for (const environment of ENVIRONMENTS) assert.match(writes[0][1], new RegExp(`LD_EVALUATION_SDK_KEY_${environment.key.toUpperCase()}=sdk-${environment.key}`));
+  assert.deepEqual(writes[0][1].trim().split('\n').map((line) => line.split('=')[0]), ENVIRONMENTS.map((environment) => `LD_EVALUATION_SDK_KEY_${environment.key.toUpperCase()}`));
   assert.deepEqual(clones.map((clone) => clone.url), REPOS.map((repo) => `https://github.com/${env.GH_ORG}/${repo}.git`));
   assert.equal(clones.some((clone) => clone.url.includes('token') || clone.url.includes('@github.com')), false);
   assert.equal(operations.some(([kind]) => kind === 'rm'), true);
@@ -171,20 +218,34 @@ test('runtime preparation removes partial artifacts when a clone fails', async (
 test('Compose covers every repository/environment pair without evaluating the retired flag', () => {
   const compose = fs.readFileSync(new URL('../runtime/compose.yaml', import.meta.url), 'utf8');
   for (const repo of ['orders', 'storefront', 'profile']) for (const environment of ENVIRONMENTS) assert.match(compose, new RegExp(`^  ${repo}-${environment.key}:`, 'm'));
+  const headings = [...compose.matchAll(/^  (orders|storefront|profile)-(production|staging|test|dev):$/gm)].map((match) => match[0].trim().slice(0, -1));
+  assert.deepEqual(headings, ENVIRONMENTS.flatMap(({ key }) => ['orders', 'storefront', 'profile'].map((repo) => `${repo}-${key}`)));
+  for (const { key } of ENVIRONMENTS) {
+    assert.equal([...compose.matchAll(new RegExp(`LD_EVALUATION_SDK_KEY_${key.toUpperCase()}`, 'g'))].length, 3);
+    assert.equal([...compose.matchAll(new RegExp(`"--profile", "${key}"`, 'g'))].length, 3);
+  }
   assert.equal(compose.includes('demo-retired-banner'), false); assert.match(compose, /restart: unless-stopped/); assert.match(compose, /max-size: 10m/);
 });
 test('GitHub Actions checks direct pushes to main without lifecycle commands', () => {
   const workflow = fs.readFileSync(new URL('../.github/workflows/test.yml', import.meta.url), 'utf8');
   assert.match(workflow, /push:\s+branches:\s+- main/);
   assert.match(workflow, /permissions:\s+contents: read/);
+  assert.match(workflow, /actions\/checkout@v7/); assert.match(workflow, /actions\/setup-node@v7/); assert.match(workflow, /node-version: 24/);
   assert.match(workflow, /node --check demo\.mjs/); assert.match(workflow, /node --check lib\.mjs/); assert.match(workflow, /npm test/);
-  for (const command of ['doctor', 'recreate', 'run', 'destroy']) assert.equal(workflow.includes(`demo.mjs ${command}`), false);
+  for (const command of ['doctor', 'recreate', 'audit', 'destroy']) assert.equal(workflow.includes(`demo.mjs ${command}`), false);
+});
+test('CLI exposes audit and removes the pre-release run command', () => {
+  const cli = fs.readFileSync(new URL('../demo.mjs', import.meta.url), 'utf8');
+  assert.equal(typeof audit, 'function'); assert.match(cli, /command === 'audit'/); assert.match(cli, /<doctor\|recreate\|audit\|destroy>/); assert.equal(cli.includes("command === 'run'"), false);
 });
 test('project creation requests precisely the four demo environments', async () => {
   const calls = []; const fetcher = async (url, options) => { calls.push({ url: String(url), options }); const body = calls.length === 1 ? { key: env.LD_PROJECT_KEY } : { items: ENVIRONMENTS }; return { ok: true, status: 200, url: String(url), json: async () => body }; };
   await createProject(fetcher, env.LD_RESET_TOKEN, settingsFor(env));
   assert.match(calls[0].url, /\/api\/v2\/projects$/); assert.equal(calls[0].options.method, 'POST');
   assert.deepEqual(JSON.parse(calls[0].options.body).environments, ENVIRONMENTS);
+  assert.deepEqual(JSON.parse(calls[0].options.body).environments.map(({ key, critical }) => ({ key, critical })), [
+    { key: 'production', critical: true }, { key: 'staging', critical: true }, { key: 'test', critical: false }, { key: 'dev', critical: false }
+  ]);
   assert.match(calls[1].url, /\/api\/v2\/projects\/example-demo-project\/environments\?limit=100$/);
 });
 test('LaunchDarkly targeting covers every fixed environment with deterministic rules', async () => {
@@ -202,11 +263,11 @@ test('LaunchDarkly targeting covers every fixed environment with deterministic r
   assert.deepEqual(JSON.parse(calls[8].options.body).instructions.map((instruction) => instruction.kind), ['updateOffVariation', 'updateFallthroughVariationOrRollout', 'turnFlagOff']);
 });
 test('recreate resets the owned project and restores flags across all environments', async () => {
-  const calls = []; let blob = 0;
+  const calls = []; let blob = 0; let userAttempts = 0;
   const fetcher = async (url, options) => {
     const path = new URL(url).pathname; const method = options.method || 'GET'; calls.push({ path, method, body: options.body });
     let status = 200; let body = {};
-    if (path === '/user') body = { login: 'demo-user' };
+    if (path === '/user') { userAttempts += 1; if (userAttempts === 1) status = 429; else body = { login: 'demo-user' }; }
     else if (path === '/orgs/example-demo-org/repos' && method === 'GET') body = [];
     else if (path === '/api/v2/projects' && method === 'GET') body = { items: [] };
     else if (path === '/api/v2/projects/example-demo-project' && method === 'GET') status = 404;
@@ -221,17 +282,26 @@ test('recreate resets the owned project and restores flags across all environmen
     else if (path === '/api/v2/projects' && method === 'POST') body = { key: env.LD_PROJECT_KEY };
     else if (path.endsWith('/environments')) body = { items: ENVIRONMENTS };
     else if (path === '/api/v2/flags/example-demo-project' && method === 'POST') body = { key: JSON.parse(options.body).key, variations: [{ value: true, _id: 'true-id' }, { value: false, _id: 'false-id' }] };
-    return { ok: status < 300, status, url: String(url), json: async () => body };
+    return { ok: status < 300, status, url: String(url), headers: status === 429 ? { 'Retry-After': '0' } : {}, json: async () => body };
   };
-  let prepared = 0;
-  await recreate(fetcher, env, env.LD_PROJECT_KEY, { prepareRuntime: async () => { prepared += 1; } });
+  let prepared = 0; let preparedAt; const progress = []; const rateLimits = [];
+  await recreate(fetcher, env, env.LD_PROJECT_KEY, {
+    prepareRuntime: async () => { prepared += 1; preparedAt = progress.at(-1)?.completed; },
+    onProgress: async (event) => progress.push(event),
+    onRateLimit: async (event) => rateLimits.push(event),
+    request: { sleep: async () => {}, random: () => 0 }
+  });
   assert.equal(calls.filter((call) => call.method === 'DELETE' && call.path === '/api/v2/projects/example-demo-project').length, 1);
   assert.equal(calls.filter((call) => call.method === 'DELETE' && call.path.startsWith('/api/v2/flags/')).length, 0);
   assert.equal(calls.filter((call) => call.method === 'POST' && call.path === '/api/v2/projects').length, 1);
   const targeting = calls.filter((call) => call.method === 'PATCH' && call.path.startsWith('/api/v2/flags/'));
   assert.equal(targeting.length, FLAGS.length * ENVIRONMENTS.length);
   assert.deepEqual(new Set(targeting.map((call) => JSON.parse(call.body).environmentKey)), new Set(ENVIRONMENTS.map((environment) => environment.key)));
-  assert.equal(prepared, 1);
+  assert.equal(prepared, 1); assert.equal(preparedAt, 14);
+  assert.deepEqual(progress.map((event) => event.completed), Array.from({ length: 16 }, (_, index) => index));
+  assert.equal(progress.every((event) => event.total === 15), true); assert.equal(progress[0].label, 'Checking GitHub reset-token access'); assert.equal(progress.at(-1).label, 'Recreate complete');
+  assert.deepEqual(rateLimits, [{ provider: 'GitHub', status: 429, retry: 1, maxRetries: 5, remainingMs: 0 }]);
+  for (const secret of [env.GH_RESET_TOKEN, env.GH_DEMO_TOKEN, env.LD_RESET_TOKEN, env.LD_DEMO_TOKEN]) assert.equal(JSON.stringify({ progress, rateLimits }).includes(secret), false);
 });
 test('destroy removes the owned project rather than individually deleting flags', async () => {
   const calls = []; const fetcher = async (url, options) => { calls.push({ path: new URL(url).pathname, method: options.method }); return { ok: false, status: 404, url: String(url), json: async () => ({}) }; };

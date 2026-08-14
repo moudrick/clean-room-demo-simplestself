@@ -11,8 +11,8 @@ docker compose --env-file runtime/sdk-keys.env -f runtime/compose.yaml up --deta
 Inspect them:
 
 ```console
-docker compose --env-file runtime/sdk-keys.env -f runtime/compose.yaml ps
-docker compose --env-file runtime/sdk-keys.env -f runtime/compose.yaml logs --tail 50
+docker compose --env-file runtime/sdk-keys.env -f runtime/compose.yaml ps --all
+docker compose --env-file runtime/sdk-keys.env -f runtime/compose.yaml logs --tail 20 --timestamps
 ```
 
 Stop traffic before `recreate` or `destroy`:
