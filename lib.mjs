@@ -1,3 +1,9 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 export const ORG_ENV = 'GH_ORG';
 export const PROJECT_ENV = 'LD_PROJECT_KEY';
 export const REPOS = ['demo-orders', 'demo-storefront', 'demo-profile'];
@@ -14,6 +20,11 @@ export const LD = 'https://app.launchdarkly.com';
 const origins = new Set([GH, LD]);
 const MAX_RATE_LIMIT_RETRIES = 5;
 const MAX_RATE_LIMIT_WAIT_MS = 5 * 60 * 1000;
+const runtimeDirectory = (root) => {
+  const workspace = path.resolve(root); const runtime = path.resolve(workspace, 'runtime');
+  if (path.dirname(runtime) !== workspace || path.basename(runtime) !== 'runtime') throw new Error('Refusing a runtime path outside the workspace.');
+  return runtime;
+};
 
 export function settingsFor(env) {
   const org = env[ORG_ENV]; const project = env[PROJECT_ENV];
@@ -154,34 +165,68 @@ export async function waitForProjectAbsence(fetcher, token, settings, sleep = (m
 }
 function evaluatorSource(repository, flags) {
   return `import * as LaunchDarkly from '@launchdarkly/node-server-sdk';
+import { batchSize, contextForTraffic } from './traffic.mjs';
 
 const repository = '${repository}';
 const flags = ${JSON.stringify(flags)};
-const defaults = { contextKey: 'demo-user', plan: 'free', region: 'eu', cohort: 'control' };
+const defaults = { contextKey: 'demo-user', plan: 'free', region: 'eu', cohort: 'control', profile: 'production', intervalSeconds: 300, traffic: false };
 const safeIdentifier = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+let stopRequested = false; let wake;
 
 function optionsFrom(argv) {
   const options = { ...defaults };
-  const names = new Map([['--context-key', 'contextKey'], ['--plan', 'plan'], ['--region', 'region'], ['--cohort', 'cohort']]);
-  for (let index = 0; index < argv.length; index += 2) {
-    const name = argv[index]; const value = argv[index + 1]; const property = names.get(name);
-    if (!property || value === undefined || !safeIdentifier.test(value)) throw new Error('Arguments must be safe non-empty identifiers.');
-    options[property] = value;
+  const names = new Map([['--context-key', 'contextKey'], ['--plan', 'plan'], ['--region', 'region'], ['--cohort', 'cohort'], ['--profile', 'profile'], ['--interval-seconds', 'intervalSeconds']]);
+  for (let index = 0; index < argv.length; index += 1) {
+    const name = argv[index];
+    if (name === '--traffic') { options.traffic = true; continue; }
+    const property = names.get(name); const value = argv[index + 1];
+    if (!property || value === undefined) throw new Error('Unknown or incomplete argument.');
+    if (property === 'intervalSeconds') {
+      if (!/^\\d+$/.test(value) || Number(value) < 10 || Number(value) > 86400) throw new Error('Interval must be from 10 to 86400 seconds.');
+      options.intervalSeconds = Number(value);
+    } else {
+      if (!safeIdentifier.test(value)) throw new Error('Arguments must be safe non-empty identifiers.');
+      options[property] = value;
+    }
+    index += 1;
   }
+  if (!['production', 'test', 'staging', 'dev'].includes(options.profile)) throw new Error('Unknown traffic profile.');
   return options;
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    if (stopRequested) { resolve(); return; }
+    let timer; const finish = () => { clearTimeout(timer); if (wake === finish) wake = undefined; resolve(); };
+    timer = setTimeout(finish, ms); wake = finish;
+  });
+}
+async function evaluate(client, context) {
+  for (const flag of flags) console.log(JSON.stringify({ repository, flag, value: await client.boolVariation(flag, context, false), context }));
 }
 
 async function main() {
   const sdkKey = process.env.LD_EVALUATION_SDK_KEY;
   if (!sdkKey) throw new Error('LD_EVALUATION_SDK_KEY is required.');
   const options = optionsFrom(process.argv.slice(2));
-  const context = { kind: 'user', key: options.contextKey, plan: options.plan, region: options.region, cohort: options.cohort };
   const client = LaunchDarkly.init(sdkKey);
+  const stop = () => { stopRequested = true; if (wake) wake(); };
+  process.once('SIGINT', stop); process.once('SIGTERM', stop);
   try {
     await client.waitForInitialization({ timeout: 10 });
-    for (const flag of flags) console.log(JSON.stringify({ repository, flag, value: await client.boolVariation(flag, context, false), context }));
-    await client.flush();
+    if (!options.traffic) await evaluate(client, { kind: 'user', key: options.contextKey, service: repository, plan: options.plan, region: options.region, cohort: options.cohort });
+    else {
+      let index = 0;
+      while (!stopRequested) {
+        const count = batchSize(options.profile, new Date());
+        for (let item = 0; item < count && !stopRequested; item += 1) { await evaluate(client, contextForTraffic(repository, options.profile, index)); index += 1; }
+        await client.flush();
+        if (!stopRequested) await wait(options.intervalSeconds * 1000);
+      }
+    }
   } finally {
+    process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop);
+    await client.flush();
     await client.close();
   }
 }
@@ -189,12 +234,42 @@ async function main() {
 main().catch(() => { console.error('Error: evaluator failed.'); process.exitCode = 1; });
 `;
 }
+function trafficSource() {
+  return `const profiles = {
+  production: { enterprise: 10, beta: 15, legacy: 8, busy: 4, quiet: 1 },
+  staging: { enterprise: 20, beta: 30, legacy: 20, busy: 3, quiet: 1 },
+  test: { enterprise: 30, beta: 35, legacy: 30, busy: 2, quiet: 1 },
+  dev: { enterprise: 15, beta: 25, legacy: 20, busy: 1, quiet: 1 }
+};
+const offsets = { 'demo-orders': 11, 'demo-storefront': 43, 'demo-profile': 71 };
+
+export function contextForTraffic(repository, profile, index) {
+  const settings = profiles[profile];
+  if (!settings || !Object.hasOwn(offsets, repository) || !Number.isSafeInteger(index) || index < 0) throw new Error('Invalid traffic input.');
+  const bucket = (index * 37 + offsets[repository]) % 100;
+  const context = { kind: 'user', key: [repository, profile, index % 200].join('-'), service: repository, plan: 'free', region: 'eu', cohort: 'control' };
+  if (repository === 'demo-profile') { if (bucket < settings.legacy) context.region = 'legacy'; }
+  else if (bucket < settings.enterprise) context.plan = 'enterprise';
+  else if (bucket < settings.enterprise + settings.beta) context.cohort = 'checkout-beta';
+  return context;
+}
+
+export function batchSize(profile, at) {
+  const settings = profiles[profile];
+  if (!settings || !(at instanceof Date) || Number.isNaN(at.valueOf())) throw new Error('Invalid traffic schedule input.');
+  const day = at.getUTCDay(); const hour = at.getUTCHours(); const businessHours = day >= 1 && day <= 5 && hour >= 7 && hour < 19;
+  return businessHours ? settings.busy : settings.quiet;
+}
+`;
+}
 function repositoryFiles(repository, flags) {
   return [
-    { path: 'package.json', content: `${JSON.stringify({ name: repository, private: true, type: 'module', scripts: { evaluate: 'node app.mjs' }, dependencies: { '@launchdarkly/node-server-sdk': '^9.0.0' } }, null, 2)}\n` },
+    { path: 'package.json', content: `${JSON.stringify({ name: repository, private: true, type: 'module', scripts: { evaluate: 'node app.mjs', traffic: 'node app.mjs --traffic' }, dependencies: { '@launchdarkly/node-server-sdk': '^9.0.0' } }, null, 2)}\n` },
     { path: 'app.mjs', content: evaluatorSource(repository, flags) },
+    { path: 'traffic.mjs', content: trafficSource() },
+    { path: 'Dockerfile', content: "FROM node:22-alpine\nWORKDIR /app\nCOPY package.json ./\nRUN npm install --omit=dev\nCOPY app.mjs traffic.mjs ./\nUSER node\nCMD [\"npm\", \"run\", \"traffic\"]\n" },
     { path: '.gitignore', content: 'node_modules/\n.env\n' },
-    { path: 'README.md', content: `# ${repository} synthetic evaluator\n\nRun \`npm install\`, then set \`LD_EVALUATION_SDK_KEY\` and run \`npm run evaluate -- --cohort checkout-beta\`.\n` }
+    { path: 'README.md', content: `# ${repository} synthetic evaluator\n\nRun \`npm install\`, set \`LD_EVALUATION_SDK_KEY\`, then use \`npm run evaluate -- --cohort checkout-beta\` for one evaluation or \`npm run traffic -- --profile production\` for cumulative traffic. Stop traffic with Ctrl+C so pending events flush.\n` }
   ];
 }
 export const SOURCES = {
@@ -239,7 +314,35 @@ export async function createProject(fetcher, token, settings) {
   if (project.key !== settings.project) throw new Error('Created LaunchDarkly project key mismatch.');
   const environments = await ld(fetcher, `/api/v2/projects/${settings.project}/environments?limit=100`, token);
   if (!Array.isArray(environments.items) || environments.items.length !== ENVIRONMENT_KEYS.length || environments.items.some((environment) => !ENVIRONMENT_KEYS.includes(environment.key))) throw new Error('Created LaunchDarkly environments do not match the fixed demo scope.');
-  return project;
+  return { project, environments: environments.items };
+}
+export async function prepareRuntime(settings, environments, controls = {}) {
+  assertScope(settings);
+  if (!Array.isArray(environments) || environments.length !== ENVIRONMENT_KEYS.length || environments.some((environment) => !ENVIRONMENT_KEYS.includes(environment.key) || typeof environment.apiKey !== 'string' || !environment.apiKey || /[\r\n]/.test(environment.apiKey))) throw new Error('LaunchDarkly SDK key evidence does not match the fixed runtime scope.');
+  const fileSystem = controls.fileSystem || fs; const root = controls.root || process.cwd(); const runtime = runtimeDirectory(root); const repos = path.join(runtime, 'repos');
+  const keyFile = path.join(runtime, 'sdk-keys.env');
+  const clone = controls.clone || (async (url, target) => execFileAsync('git', ['clone', '--depth', '1', url, target], { cwd: root, windowsHide: true }));
+  fileSystem.rmSync(repos, { recursive: true, force: true }); fileSystem.rmSync(keyFile, { force: true }); fileSystem.mkdirSync(repos, { recursive: true });
+  const lines = ENVIRONMENT_KEYS.map((key) => {
+    const environment = environments.find((item) => item.key === key); return `LD_EVALUATION_SDK_KEY_${key.toUpperCase()}=${environment.apiKey}`;
+  });
+  const clones = [];
+  try {
+    for (const repository of REPOS) {
+      const url = `https://github.com/${settings.org}/${repository}.git`; const target = path.join(repos, repository);
+      await clone(url, target); clones.push({ repository, url, target });
+    }
+    fileSystem.writeFileSync(keyFile, `${lines.join('\n')}\n`, { encoding: 'utf8', mode: 0o600 });
+  } catch (error) {
+    fileSystem.rmSync(keyFile, { force: true }); fileSystem.rmSync(repos, { recursive: true, force: true });
+    throw error;
+  }
+  return { runtime, clones };
+}
+export function cleanRuntime(root = process.cwd(), fileSystem = fs) {
+  const runtime = runtimeDirectory(root);
+  fileSystem.rmSync(path.join(runtime, 'sdk-keys.env'), { force: true });
+  fileSystem.rmSync(path.join(runtime, 'repos'), { recursive: true, force: true });
 }
 export async function configureFlagTargeting(fetcher, token, settings, environment, flag) {
   assertScope({ ...settings, flags: [flag?.key, ...FLAGS.filter((key) => key !== flag?.key)] });
@@ -259,7 +362,7 @@ export async function configureFlagTargeting(fetcher, token, settings, environme
     body: JSON.stringify({ environmentKey: environment, instructions })
   });
 }
-export async function recreate(fetcher, env, confirmation) {
+export async function recreate(fetcher, env, confirmation, controls = {}) {
   const settings = settingsFor(env); requireConfirmation(confirmation, settings.project); const t = tokensFor('recreate', env); assertScope({ ...settings });
   try { await checkGithub(fetcher, t.GH_RESET_TOKEN, settings); } catch (error) { throw new Error(`GH_RESET_TOKEN GitHub authentication/read access failed: ${error.message}`); }
   try { await checkLaunchDarkly(fetcher, t.LD_RESET_TOKEN, settings); } catch (error) { throw new Error(`LD_RESET_TOKEN LaunchDarkly authentication/project-list access failed: ${error.message}`); }
@@ -269,7 +372,8 @@ export async function recreate(fetcher, env, confirmation) {
   for (const name of REPOS) await waitForRepositoryAbsence(fetcher, t.GH_RESET_TOKEN, settings, name);
   await waitForProjectAbsence(fetcher, t.LD_RESET_TOKEN, settings);
   for (const name of REPOS) try { await createRepositoryWithSource(fetcher, t.GH_RESET_TOKEN, settings, name, SOURCES[name]); } catch (error) { throw new Error(`GH_RESET_TOKEN provision repository ${settings.org}/${name} failed: ${error.message}`); }
-  try { await createProject(fetcher, t.LD_RESET_TOKEN, settings); } catch (error) { throw new Error(`LD_RESET_TOKEN create project ${settings.project} failed: ${error.message}`); }
+  let createdProject;
+  try { createdProject = await createProject(fetcher, t.LD_RESET_TOKEN, settings); } catch (error) { throw new Error(`LD_RESET_TOKEN create project ${settings.project} failed: ${error.message}`); }
   for (const key of FLAGS) {
     let flag;
     try { flag = await ld(fetcher, `/api/v2/flags/${settings.project}`, t.LD_RESET_TOKEN, { method: 'POST', body: JSON.stringify({ key, name: key, variations: [{ value: true }, { value: false }] }) }); }
@@ -277,12 +381,15 @@ export async function recreate(fetcher, env, confirmation) {
     for (const environment of ENVIRONMENT_KEYS) try { await configureFlagTargeting(fetcher, t.LD_RESET_TOKEN, settings, environment, flag); }
     catch (error) { throw new Error(`LD_RESET_TOKEN configure flag ${settings.project}/${key} in environment ${environment} failed: ${error.message}`); }
   }
-  return deleted;
+  try { await (controls.prepareRuntime || prepareRuntime)(settings, createdProject.environments, controls.runtime); }
+  catch (error) { throw new Error(`Prepare local runtime failed: ${error.message}`); }
+  return { deleted };
 }
-export async function destroy(fetcher, env, confirmation) {
+export async function destroy(fetcher, env, confirmation, controls = {}) {
   const settings = settingsFor(env); requireConfirmation(confirmation, settings.project); const t = tokensFor('destroy', env); assertScope({ ...settings }); const result = [];
   for (const name of REPOS) result.push([name, await removeIfPresent(fetcher, GH, `/repos/${settings.org}/${name}`, t.GH_RESET_TOKEN, `GH_RESET_TOKEN delete repository ${settings.org}/${name}`)]);
   result.push([settings.project, await removeIfPresent(fetcher, LD, `/api/v2/projects/${settings.project}`, t.LD_RESET_TOKEN, `LD_RESET_TOKEN delete project ${settings.project}`)]);
+  (controls.cleanRuntime || cleanRuntime)(controls.runtimeRoot);
   return result;
 }
 export async function auditFlag(fetcher, token, settings, key) {

@@ -20,7 +20,7 @@ try {
     console.log('TOKEN           IDENTITY   SCOPE       READ   WRITE/DELETE');
     for (const [token, identity] of rows) console.log(`${token.padEnd(16)}${String(identity).padEnd(11)}EXPECTED    OK     ${token.includes('RESET') ? 'VERIFIED DURING RECREATE' : 'NOT REQUESTED'}`);
   } else if (command === 'recreate') {
-    printTargets(); const result = await recreate(fetch, env, confirmation); for (const [name, state] of result) console.log(`${name}: ${state}`); console.log('Created synthetic repositories, project, environments, and flags. The old profile commit timestamp is deliberately synthetic.');
+    printTargets(); const result = await recreate(fetch, env, confirmation); for (const [name, state] of result.deleted) console.log(`${name}: ${state}`); console.log('Created synthetic repositories, project, environments, flags, and local runtime clones. The old profile commit timestamp is deliberately synthetic.');
   } else if (command === 'destroy') {
     printTargets(); for (const [name, state] of await destroy(fetch, env, confirmation)) console.log(`${name}: ${state}`);
   } else if (command === 'run') {

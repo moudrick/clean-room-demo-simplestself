@@ -1,0 +1,92 @@
+x-orders: &orders
+  build: ./repos/demo-orders
+  image: clean-room-demo/demo-orders:local
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: &rotated-logs
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+x-storefront: &storefront
+  build: ./repos/demo-storefront
+  image: clean-room-demo/demo-storefront:local
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *rotated-logs
+
+x-profile: &profile
+  build: ./repos/demo-profile
+  image: clean-room-demo/demo-profile:local
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *rotated-logs
+
+services:
+  orders-production:
+    <<: *orders
+    environment:
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+    command: ["npm", "run", "traffic", "--", "--profile", "production"]
+  storefront-production:
+    <<: *storefront
+    environment:
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+    command: ["npm", "run", "traffic", "--", "--profile", "production"]
+  profile-production:
+    <<: *profile
+    environment:
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+    command: ["npm", "run", "traffic", "--", "--profile", "production"]
+
+  orders-test:
+    <<: *orders
+    environment:
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_TEST:?missing test SDK key}
+    command: ["npm", "run", "traffic", "--", "--profile", "test"]
+  storefront-test:
+    <<: *storefront
+    environment:
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_TEST:?missing test SDK key}
+    command: ["npm", "run", "traffic", "--", "--profile", "test"]
+  profile-test:
+    <<: *profile
+    environment:
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_TEST:?missing test SDK key}
+    command: ["npm", "run", "traffic", "--", "--profile", "test"]
+
+  orders-staging:
+    <<: *orders
+    environment:
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_STAGING:?missing staging SDK key}
+    command: ["npm", "run", "traffic", "--", "--profile", "staging"]
+  storefront-staging:
+    <<: *storefront
+    environment:
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_STAGING:?missing staging SDK key}
+    command: ["npm", "run", "traffic", "--", "--profile", "staging"]
+  profile-staging:
+    <<: *profile
+    environment:
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_STAGING:?missing staging SDK key}
+    command: ["npm", "run", "traffic", "--", "--profile", "staging"]
+
+  orders-dev:
+    <<: *orders
+    environment:
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_DEV:?missing dev SDK key}
+    command: ["npm", "run", "traffic", "--", "--profile", "dev"]
+  storefront-dev:
+    <<: *storefront
+    environment:
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_DEV:?missing dev SDK key}
+    command: ["npm", "run", "traffic", "--", "--profile", "dev"]
+  profile-dev:
+    <<: *profile
+    environment:
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_DEV:?missing dev SDK key}
+    command: ["npm", "run", "traffic", "--", "--profile", "dev"]
