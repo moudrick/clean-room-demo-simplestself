@@ -1,3 +1,6 @@
+x-runtime-environment: &runtime-environment
+  DEMO_GENERATION_ID: ${DEMO_GENERATION_ID:?missing demo generation}
+
 x-orders: &orders
   build: ./repos/demo-orders
   image: clean-room-demo/demo-orders:local
@@ -30,63 +33,89 @@ services:
   orders-production:
     <<: *orders
     environment:
+      <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+      DEMO_ENVIRONMENT: production
+      DEMO_EVALUATIONS_PER_HOUR: ${DEMO_EVALUATIONS_PER_HOUR:-1200}
+      DEMO_CONTEXT_POOL_SIZE: ${DEMO_CONTEXT_POOL_SIZE:-1000}
     command: ["npm", "run", "traffic", "--", "--profile", "production"]
   storefront-production:
     <<: *storefront
     environment:
+      <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+      DEMO_ENVIRONMENT: production
     command: ["npm", "run", "traffic", "--", "--profile", "production"]
   profile-production:
     <<: *profile
     environment:
+      <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+      DEMO_ENVIRONMENT: production
     command: ["npm", "run", "traffic", "--", "--profile", "production"]
 
   orders-staging:
     <<: *orders
     environment:
+      <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_STAGING:?missing staging SDK key}
+      DEMO_ENVIRONMENT: staging
     command: ["npm", "run", "traffic", "--", "--profile", "staging"]
   storefront-staging:
     <<: *storefront
     environment:
+      <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_STAGING:?missing staging SDK key}
+      DEMO_ENVIRONMENT: staging
     command: ["npm", "run", "traffic", "--", "--profile", "staging"]
   profile-staging:
     <<: *profile
     environment:
+      <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_STAGING:?missing staging SDK key}
+      DEMO_ENVIRONMENT: staging
     command: ["npm", "run", "traffic", "--", "--profile", "staging"]
 
   orders-test:
     <<: *orders
     environment:
+      <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_TEST:?missing test SDK key}
+      DEMO_ENVIRONMENT: test
     command: ["npm", "run", "traffic", "--", "--profile", "test"]
   storefront-test:
     <<: *storefront
     environment:
+      <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_TEST:?missing test SDK key}
+      DEMO_ENVIRONMENT: test
     command: ["npm", "run", "traffic", "--", "--profile", "test"]
   profile-test:
     <<: *profile
     environment:
+      <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_TEST:?missing test SDK key}
+      DEMO_ENVIRONMENT: test
     command: ["npm", "run", "traffic", "--", "--profile", "test"]
 
   orders-dev:
     <<: *orders
     environment:
+      <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_DEV:?missing dev SDK key}
+      DEMO_ENVIRONMENT: dev
     command: ["npm", "run", "traffic", "--", "--profile", "dev"]
   storefront-dev:
     <<: *storefront
     environment:
+      <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_DEV:?missing dev SDK key}
+      DEMO_ENVIRONMENT: dev
     command: ["npm", "run", "traffic", "--", "--profile", "dev"]
   profile-dev:
     <<: *profile
     environment:
+      <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_DEV:?missing dev SDK key}
+      DEMO_ENVIRONMENT: dev
     command: ["npm", "run", "traffic", "--", "--profile", "dev"]
