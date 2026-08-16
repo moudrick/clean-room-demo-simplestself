@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "s003",
+  "title": "Wave 1 release v003: derive cluster assignment for any service",
+  "recommendedDate": "2026-08-18",
+  "cadence": "three-day",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "updateServices": ["demo-catalog", "demo-pricing", "demo-shipping", "demo-search"],
+  "releaseTags": {
+    "demo-catalog": "v003",
+    "demo-pricing": "v003",
+    "demo-shipping": "v003",
+    "demo-search": "v003"
+  },
+  "deploy": [
+    { "service": "demo-orders", "environment": "production", "traffic": "paced-probe" },
+    { "service": "demo-orders", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-orders", "environment": "test", "traffic": "periodic" },
+    { "service": "demo-orders", "environment": "dev", "traffic": "rare" },
+    { "service": "demo-storefront", "environment": "production", "traffic": "business-hours-production" },
+    { "service": "demo-storefront", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-profile", "environment": "production", "traffic": "business-hours-production" },
+    { "service": "demo-profile", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-catalog", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-catalog", "environment": "dev", "traffic": "rare" },
+    { "service": "demo-search", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-search", "environment": "dev", "traffic": "rare" }
+  ],
+  "targeting": [],
+  "notes": [
+    "The generated traffic module assigned synthetic clusters from a hardcoded per-repository offset map containing only the three pre-campaign services. Any newly introduced service threw 'Invalid cluster input.' on its first evaluation, so the v002 evaluators for demo-catalog and demo-search crash-looped without ever recording an evaluation.",
+    "v003 derives the offset deterministically from the service name and keeps the three original offsets byte-identical, so demo-orders, demo-storefront, and demo-profile retain their existing cluster distribution and their accumulated context history stays comparable.",
+    "Found by deploying rather than by reading the code. The evaluators were started, observed failing, and the cause traced from their logs — which is the whole reason Wave 1 deploys before the rollout steps depend on it."
+  ]
+}

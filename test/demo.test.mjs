@@ -272,13 +272,16 @@ test('runtime preparation removes partial artifacts when a clone fails', async (
 });
 test('Compose covers every repository/environment pair without evaluating the retired flag', () => {
   const compose = fs.readFileSync(new URL('../runtime/compose.yaml', import.meta.url), 'utf8');
-  for (const repo of ['orders', 'storefront', 'profile']) for (const environment of ENVIRONMENTS) assert.match(compose, new RegExp(`^  ${repo}-${environment.key}:`, 'm'));
-  const headings = [...compose.matchAll(/^  (orders|storefront|profile)-(production|staging|test|dev):$/gm)].map((match) => match[0].trim().slice(0, -1));
-  assert.deepEqual(headings, ENVIRONMENTS.flatMap(({ key }) => ['orders', 'storefront', 'profile'].map((repo) => `${repo}-${key}`)));
+  const declared = [...compose.matchAll(/^ {2}([a-z0-9-]+):$/gm)].map((match) => match[1]).sort();
+  const model = compileScenario(scenarioFiles);
+  const expected = model.deployments.map((tuple) => `${tuple.service.replace(/^demo-/, '')}-${tuple.environment}`).sort();
+  assert.deepEqual(declared, expected, 'Compose must declare exactly the deployment tuples the active step selects');
+  assert.ok(declared.length <= scenarioFiles.sandbox.limits.maxEvaluatorContainers);
   for (const { key } of ENVIRONMENTS) {
-    assert.equal([...compose.matchAll(new RegExp(`LD_EVALUATION_SDK_KEY_${key.toUpperCase()}`, 'g'))].length, 3);
-    assert.equal([...compose.matchAll(new RegExp(`"--profile", "${key}"`, 'g'))].length, 3);
-    assert.equal([...compose.matchAll(new RegExp(`DEMO_ENVIRONMENT: ${key}`, 'g'))].length, 3);
+    const perEnvironment = model.deployments.filter((tuple) => tuple.environment === key).length;
+    assert.equal([...compose.matchAll(new RegExp(`LD_EVALUATION_SDK_KEY_${key.toUpperCase()}`, 'g'))].length, perEnvironment);
+    assert.equal([...compose.matchAll(new RegExp(`"--profile", "${key}"`, 'g'))].length, perEnvironment);
+    assert.equal([...compose.matchAll(new RegExp(`DEMO_ENVIRONMENT: ${key}`, 'g'))].length, perEnvironment);
   }
   assert.equal([...compose.matchAll(/^      DEMO_EVALUATIONS_PER_HOUR:/gm)].length, 1); assert.equal([...compose.matchAll(/^      DEMO_CONTEXT_POOL_SIZE:/gm)].length, 1);
   assert.match(compose, /DEMO_EVALUATIONS_PER_HOUR:-1200/); assert.match(compose, /DEMO_GENERATION_ID/);
@@ -596,22 +599,22 @@ test('service validation enforces catalog membership and consumer spread', () =>
 });
 test('the compiler is forward-only and refuses contract violations', () => {
   const base = () => JSON.parse(JSON.stringify(scenarioFiles));
-  const rerun = base(); rerun.steps.push({ ...JSON.parse(JSON.stringify(rerun.steps[0])), id: 's002', recommendedDate: '2026-08-21' });
+  const rerun = base(); rerun.steps.push({ ...JSON.parse(JSON.stringify(rerun.steps[0])), id: 's900', recommendedDate: '2026-08-21' });
   assert.throws(() => compileScenario(rerun), /re-introduces/);
-  const backward = base(); backward.steps.push({ schemaVersion: 1, id: 's002', recommendedDate: '2026-08-01', cadence: 'three-day' });
+  const backward = base(); backward.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: '2026-08-01', cadence: 'three-day' });
   assert.throws(() => compileScenario(backward), /forward-only/);
-  const daily = base(); daily.steps.push({ schemaVersion: 1, id: 's002', recommendedDate: '2026-08-25', cadence: 'daily' });
+  const daily = base(); daily.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: '2026-08-25', cadence: 'daily' });
   assert.throws(() => compileScenario(daily), /daily cadence outside the permitted/);
-  const allowedDaily = base(); allowedDaily.steps.push({ schemaVersion: 1, id: 's002', recommendedDate: '2026-08-25', cadence: 'daily', transition: 'staging-canary' });
+  const allowedDaily = base(); allowedDaily.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: '2026-08-25', cadence: 'daily', transition: 'staging-canary' });
   assert.doesNotThrow(() => compileScenario(allowedDaily), 'a named short transition may use daily cadence');
-  const inWindow = base(); inWindow.steps.push({ schemaVersion: 1, id: 's002', recommendedDate: '2026-09-11', cadence: 'daily' });
+  const inWindow = base(); inWindow.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: '2026-09-11', cadence: 'daily' });
   assert.doesNotThrow(() => compileScenario(inWindow), 'the screenshot window permits daily cadence');
   const overCap = base();
   overCap.steps[0].deploy.push({ service: 'demo-profile', environment: 'test', traffic: 'rare' });
   assert.throws(() => compileScenario(overCap), /exceeding the cap of 12/);
   const undeclared = base(); undeclared.steps[0].sourceReferences['demo-search'] = ['demo-fraud-screening'];
   assert.throws(() => compileScenario(undeclared), /does not declare it as a consumer/);
-  const gap = base(); gap.steps.push({ schemaVersion: 1, id: 's002', recommendedDate: '2026-08-19', cadence: 'three-day', minGapDaysFromPrevious: 3 });
+  const gap = base(); gap.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: '2026-08-19', cadence: 'three-day', minGapDaysFromPrevious: 3 });
   assert.throws(() => compileScenario(gap), /requires at least 3/);
 });
 test('reconcile creates missing catalog repositories and refuses ownership drift', async () => {
@@ -644,11 +647,18 @@ test('reconcile creates missing catalog repositories and refuses ownership drift
   await assert.rejects(() => reconcileStep(make(() => ({ scenarioId: 'campaign-2026-08-16', service: 'demo-wrong' })), env, scenarioFiles, 's001', { confirmation: env.LD_PROJECT_KEY }), /without this scenario's ownership marker/);
 });
 test('generated catalog source carries the ownership marker and literal flag keys', () => {
-  const source = catalogSource('demo-search', ['demo-search-ranking-v3'], 'campaign-2026-08-16', 'nodejs');
+  const keys = ['demo-search-ranking-v3', 'demo-catalog-enrichment'];
+  const source = catalogSource('demo-search', keys, 'campaign-2026-08-16', 'nodejs', 'v001');
   const marker = source.files.find((file) => file.path === OWNERSHIP_MARKER);
-  assert.deepEqual(JSON.parse(marker.content), { scenarioId: 'campaign-2026-08-16', service: 'demo-search', template: 'nodejs' });
-  const app = source.files.find((file) => file.path === 'app.mjs');
-  assert.match(app.content, /demo-search-ranking-v3/, 'the literal flag key must appear in executable source');
+  assert.deepEqual(JSON.parse(marker.content), { scenarioId: 'campaign-2026-08-16', service: 'demo-search', template: 'nodejs', release: 'v001' });
+  const app = source.files.find((file) => file.path === 'app.mjs').content;
+  for (const key of keys) assert.match(app, new RegExp(key), `${key} must appear literally in executable source`);
+  assert.match(app, /const release = 'v001'/, 'the release must be embedded so application metadata reports the deployed version');
+  assert.ok(app.match(/for \(const flag of flags\)/g).length >= 3, 'ordinary traffic and one-shot evaluation must both iterate every flag owned by the release');
+  const probe = app.slice(app.indexOf('async function probeTraffic'), app.indexOf('async function main'));
+  const outsideProbe = app.replace(probe, '');
+  assert.equal(outsideProbe.includes('flags[0]'), false, 'only the bounded rate probe may single out one flag');
+  assert.ok(probe.includes('flags[0]'), 'the rate probe stays deliberately single-flag so its evaluations-per-hour figure keeps meaning');
   assert.throws(() => catalogSource('demo-payments', [], 'campaign-2026-08-16', 'go'), /not implemented yet/);
 });
 test('campaign lock leaves read-only audit unaffected', async () => {

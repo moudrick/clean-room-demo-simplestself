@@ -29,6 +29,22 @@ x-profile: &profile
   stop_grace_period: 30s
   logging: *rotated-logs
 
+x-catalog: &catalog
+  build: ./repos/demo-catalog
+  image: clean-room-demo/demo-catalog:local
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *rotated-logs
+
+x-search: &search
+  build: ./repos/demo-search
+  image: clean-room-demo/demo-search:local
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *rotated-logs
+
 services:
   orders-production:
     <<: *orders
@@ -83,20 +99,6 @@ services:
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_TEST:?missing test SDK key}
       DEMO_ENVIRONMENT: test
     command: ["npm", "run", "traffic", "--", "--profile", "test"]
-  storefront-test:
-    <<: *storefront
-    environment:
-      <<: *runtime-environment
-      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_TEST:?missing test SDK key}
-      DEMO_ENVIRONMENT: test
-    command: ["npm", "run", "traffic", "--", "--profile", "test"]
-  profile-test:
-    <<: *profile
-    environment:
-      <<: *runtime-environment
-      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_TEST:?missing test SDK key}
-      DEMO_ENVIRONMENT: test
-    command: ["npm", "run", "traffic", "--", "--profile", "test"]
 
   orders-dev:
     <<: *orders
@@ -105,15 +107,31 @@ services:
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_DEV:?missing dev SDK key}
       DEMO_ENVIRONMENT: dev
     command: ["npm", "run", "traffic", "--", "--profile", "dev"]
-  storefront-dev:
-    <<: *storefront
+
+  catalog-staging:
+    <<: *catalog
+    environment:
+      <<: *runtime-environment
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_STAGING:?missing staging SDK key}
+      DEMO_ENVIRONMENT: staging
+    command: ["npm", "run", "traffic", "--", "--profile", "staging"]
+  search-staging:
+    <<: *search
+    environment:
+      <<: *runtime-environment
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_STAGING:?missing staging SDK key}
+      DEMO_ENVIRONMENT: staging
+    command: ["npm", "run", "traffic", "--", "--profile", "staging"]
+
+  catalog-dev:
+    <<: *catalog
     environment:
       <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_DEV:?missing dev SDK key}
       DEMO_ENVIRONMENT: dev
     command: ["npm", "run", "traffic", "--", "--profile", "dev"]
-  profile-dev:
-    <<: *profile
+  search-dev:
+    <<: *search
     environment:
       <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_DEV:?missing dev SDK key}

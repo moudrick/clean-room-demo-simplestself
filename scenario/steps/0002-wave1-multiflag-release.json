@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "s002",
+  "title": "Wave 1 release v002: evaluate every flag a release owns, and stamp the deployed version",
+  "recommendedDate": "2026-08-18",
+  "cadence": "three-day",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "updateServices": ["demo-catalog", "demo-pricing", "demo-shipping", "demo-search"],
+  "releaseTags": {
+    "demo-catalog": "v002",
+    "demo-pricing": "v002",
+    "demo-shipping": "v002",
+    "demo-search": "v002"
+  },
+  "deploy": [
+    { "service": "demo-orders", "environment": "production", "traffic": "paced-probe" },
+    { "service": "demo-orders", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-orders", "environment": "test", "traffic": "periodic" },
+    { "service": "demo-orders", "environment": "dev", "traffic": "rare" },
+    { "service": "demo-storefront", "environment": "production", "traffic": "business-hours-production" },
+    { "service": "demo-storefront", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-profile", "environment": "production", "traffic": "business-hours-production" },
+    { "service": "demo-profile", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-catalog", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-catalog", "environment": "dev", "traffic": "rare" },
+    { "service": "demo-search", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-search", "environment": "dev", "traffic": "rare" }
+  ],
+  "targeting": [],
+  "notes": [
+    "A forward-only correction. The v001 source referenced every declared flag literally, so GitHub code-reference evidence was already correct, but its runtime evaluated only the first flag. A service like demo-catalog owning four flags would have produced evaluation evidence for one of them.",
+    "v002 evaluates every flag the release owns through a single SDK client, and embeds the release so LaunchDarkly application metadata reports the deployed version. The bounded Production rate probe deliberately stays single-flag so its evaluations-per-hour figure keeps its meaning.",
+    "Applied as a new step rather than by rewriting s001: history is append-only and tags are immutable, so v001 remains a real earlier deployable version. That is itself useful evidence for the talk's point that old deployed tags can still evaluate a key the current default branch no longer contains."
+  ]
+}

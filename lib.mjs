@@ -215,11 +215,12 @@ export async function waitForProjectAbsence(fetcher, token, settings, sleep = (m
   }
   throw new Error(`${label} failed: project still exists after 10 seconds.`);
 }
-function evaluatorSource(repository, flags) {
+function evaluatorSource(repository, flags, release = 'v001') {
   return `import * as LaunchDarkly from '@launchdarkly/node-server-sdk';
 import { batchSize, contextForOneShot, contextForTraffic, isLoadProbe, probeSummary, scheduledEvaluations } from './traffic.mjs';
 
 const repository = '${repository}';
+const release = '${release}';
 const flags = ${JSON.stringify(flags)};
 const profiles = ['production', 'staging', 'test', 'dev'];
 const safeIdentifier = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -277,15 +278,17 @@ async function flushOutcome(client) {
 }
 async function evaluateOne(client, flag, context) { return client.boolVariation(flag, context, false); }
 async function ordinaryBatch(client, options, firstIndex) {
-  const count = batchSize(options.profile, new Date()); let attempted = 0; const variations = { true: 0, false: 0 }; const clusters = {};
+  const count = batchSize(options.profile, new Date()); let attempted = 0; const perFlag = {}; const clusters = {};
+  for (const flag of flags) perFlag[flag] = { true: 0, false: 0 };
   for (let item = 0; item < count && !stopRequested; item += 1) {
     const context = contextForTraffic(repository, options.profile, firstIndex + item, { generation: options.generation, contextPoolSize: options.contextPoolSize });
-    const value = await evaluateOne(client, flags[0], context); variations[String(value)] += 1; clusters[context.cluster.key] = (clusters[context.cluster.key] || 0) + 1; attempted += 1;
+    for (const flag of flags) { const value = await evaluateOne(client, flag, context); perFlag[flag][String(value)] += 1; attempted += 1; }
+    clusters[context.cluster.key] = (clusters[context.cluster.key] || 0) + 1;
   }
   const flush = await flushOutcome(client);
-  console.log(JSON.stringify({ type: 'traffic-batch', repository, flag: flags[0], profile: options.profile, generation: options.generation, attempted, variations, clusters, flush }));
+  console.log(JSON.stringify({ type: 'traffic-batch', repository, release, flags, perFlag, profile: options.profile, generation: options.generation, contexts: count, attempted, clusters, flush }));
   if (flush !== 'ok') throw new Error('SDK flush failed.');
-  return attempted;
+  return count;
 }
 async function probeTraffic(client, options) {
   const started = Date.now(); let attempted = 0; let errors = 0; let nextSummary = started + 60000;
@@ -316,7 +319,7 @@ async function main() {
   const client = LaunchDarkly.init(sdkKey, {
     capacity: 10000, flushInterval: 5, enableEventCompression: true,
     contextKeysCapacity: Math.min(options.contextPoolSize, 10000), contextKeysFlushInterval: 300, logger,
-    application: { id: repository, name: repository + ' synthetic evaluator', version: 'task-0030', versionName: probe ? 'production-load-probe' : 'standard-traffic' }
+    application: { id: repository, name: repository + ' synthetic evaluator', version: release, versionName: probe ? 'production-load-probe' : 'standard-traffic' }
   });
   const stop = () => { stopRequested = true; if (wake) wake(); };
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
@@ -324,8 +327,8 @@ async function main() {
     await client.waitForInitialization({ timeout: 10 });
     if (!options.traffic) {
       for (let index = 0; index < options.evaluations; index += 1) {
-        const context = contextForOneShot(repository, options, index); const flag = flags[0];
-        console.log(JSON.stringify({ repository, flag, value: await evaluateOne(client, flag, context), context }));
+        const context = contextForOneShot(repository, options, index);
+        for (const flag of flags) console.log(JSON.stringify({ repository, release, flag, value: await evaluateOne(client, flag, context), context }));
       }
     } else if (probe) await probeTraffic(client, options);
     else { let index = 0; while (!stopRequested) { index += await ordinaryBatch(client, options, index); if (!stopRequested) await wait(options.intervalSeconds * 1000); } }
@@ -363,12 +366,19 @@ export const clusters = {
 };
 const offsets = { 'demo-orders': 11, 'demo-storefront': 43, 'demo-profile': 71 };
 const clusterKey = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const knownService = (repository) => typeof repository === 'string' && clusterKey.test(repository);
+const offsetFor = (repository) => {
+  if (Object.hasOwn(offsets, repository)) return offsets[repository];
+  let hash = 7;
+  for (let index = 0; index < repository.length; index += 1) hash = (hash * 31 + repository.charCodeAt(index)) % 100;
+  return hash;
+};
 
 export function isLoadProbe(repository, profile) { return repository === 'demo-orders' && profile === 'production'; }
 export function clusterFor(repository, profile, index) {
   const choices = clusters[profile];
-  if (!choices || !Object.hasOwn(offsets, repository) || !Number.isSafeInteger(index) || index < 0) throw new Error('Invalid cluster input.');
-  const bucket = (index * 17 + offsets[repository]) % 100; let boundary = 0;
+  if (!choices || !knownService(repository) || !Number.isSafeInteger(index) || index < 0) throw new Error('Invalid cluster input.');
+  const bucket = (index * 17 + offsetFor(repository)) % 100; let boundary = 0;
   const selected = choices.find((item) => { boundary += item.weight; return bucket < boundary; });
   if (!selected || !clusterKey.test(selected.key)) throw new Error('Invalid cluster configuration.');
   const { weight, ...context } = selected; return context;
@@ -377,7 +387,7 @@ function multiContext(repository, user, cluster, generation) {
   return { kind: 'multi', user, service: { key: repository, name: repository }, cluster: { ...cluster, generation } };
 }
 export function contextForOneShot(repository, options, index) {
-  if (!Object.hasOwn(offsets, repository) || !Number.isSafeInteger(options?.evaluations) || options.evaluations < 1 || !Number.isSafeInteger(index) || index < 0 || index >= options.evaluations) throw new Error('Invalid one-shot input.');
+  if (!knownService(repository) || !Number.isSafeInteger(options?.evaluations) || options.evaluations < 1 || !Number.isSafeInteger(index) || index < 0 || index >= options.evaluations) throw new Error('Invalid one-shot input.');
   const choices = clusters[options.profile]; const selected = choices?.find((item) => item.key === (options.cluster || choices[0].key));
   if (!selected) throw new Error('Cluster does not belong to the selected environment.');
   const { weight, ...cluster } = selected;
@@ -386,8 +396,8 @@ export function contextForOneShot(repository, options, index) {
 }
 export function contextForTraffic(repository, profile, index, options = {}) {
   const settings = profiles[profile]; const contextPoolSize = options.contextPoolSize ?? 10000;
-  if (!settings || !Object.hasOwn(offsets, repository) || !Number.isSafeInteger(index) || index < 0 || !Number.isSafeInteger(contextPoolSize) || contextPoolSize < 1 || contextPoolSize > 10000) throw new Error('Invalid traffic input.');
-  const bucket = (index * 37 + offsets[repository]) % 100;
+  if (!settings || !knownService(repository) || !Number.isSafeInteger(index) || index < 0 || !Number.isSafeInteger(contextPoolSize) || contextPoolSize < 1 || contextPoolSize > 10000) throw new Error('Invalid traffic input.');
+  const bucket = (index * 37 + offsetFor(repository)) % 100;
   const user = { key: [repository, profile, index % contextPoolSize].join('-'), plan: 'free', region: 'eu', cohort: 'control' };
   if (repository === 'demo-profile') { if (bucket < settings.legacy) user.region = 'legacy'; }
   else if (bucket < settings.enterprise) user.plan = 'enterprise';
@@ -410,10 +420,10 @@ export function batchSize(profile, at) {
 }
 `;
 }
-function repositoryFiles(repository, flags) {
+function repositoryFiles(repository, flags, release = 'v001') {
   return [
     { path: 'package.json', content: `${JSON.stringify({ name: repository, private: true, type: 'module', scripts: { evaluate: 'node app.mjs', traffic: 'node app.mjs --traffic' }, dependencies: { '@launchdarkly/node-server-sdk': '^9.0.0' } }, null, 2)}\n` },
-    { path: 'app.mjs', content: evaluatorSource(repository, flags) },
+    { path: 'app.mjs', content: evaluatorSource(repository, flags, release) },
     { path: 'traffic.mjs', content: trafficSource() },
     { path: 'Dockerfile', content: "FROM node:24-alpine\nENV NPM_CONFIG_UPDATE_NOTIFIER=false\nWORKDIR /app\nCOPY package.json ./\nRUN npm install --omit=dev\nCOPY app.mjs traffic.mjs ./\nUSER node\nCMD [\"npm\", \"run\", \"traffic\"]\n" },
     { path: '.gitignore', content: 'node_modules/\n.env\n' },
@@ -865,6 +875,9 @@ export function compileScenario({ sandbox, services, catalog, steps }) {
       if (introduced.has(key)) throw new Error(`Step ${step.id} re-introduces ${key}, which already exists. Resources are never recreated.`);
       introduced.set(key, { key, template: service.template, references: [], tag: null, introducedBy: step.id });
     }
+    for (const key of step.updateServices || []) {
+      if (!introduced.has(key)) throw new Error(`Step ${step.id} updates ${key}, which is not introduced yet.`);
+    }
     for (const [key, references] of Object.entries(step.sourceReferences || {})) {
       const target = introduced.get(key);
       if (!target) throw new Error(`Step ${step.id} adds source references to ${key}, which is not introduced yet.`);
@@ -916,14 +929,18 @@ export function loadScenario(root = process.cwd(), fileSystem = fs) {
   return { sandbox: read('sandbox.json'), services: read('services.json'), catalog: read('flags.json'), steps, stepFiles: files };
 }
 export const OWNERSHIP_MARKER = '.scenario-owner.json';
-export function catalogSource(serviceKey, flags, scenarioId, template = 'nodejs') {
+export function catalogSource(serviceKey, flags, scenarioId, template = 'nodejs', release = 'v001') {
   if (template !== 'nodejs') throw new Error(`Source template "${template}" is not implemented yet. Wave 1 is Node.js only; TypeScript, Go, and Python arrive with Waves 2 and 3.`);
-  const files = repositoryFiles(serviceKey, flags);
-  files.push({ path: OWNERSHIP_MARKER, content: `${JSON.stringify({ scenarioId, service: serviceKey, template }, null, 2)}\n` });
+  const files = repositoryFiles(serviceKey, flags, release);
+  files.push({ path: OWNERSHIP_MARKER, content: `${JSON.stringify({ scenarioId, service: serviceKey, template, release }, null, 2)}\n` });
   return { files, date: null };
 }
 export async function repositoryIfPresent(fetcher, token, settings, name, controls) {
   try { return await gh(fetcher, `/repos/${settings.org}/${name}`, token, undefined, controls); }
+  catch (error) { if (/\(404\)/.test(error.message)) return null; throw error; }
+}
+export async function refIfPresent(fetcher, token, settings, name, ref, controls) {
+  try { return await gh(fetcher, `/repos/${settings.org}/${name}/git/ref/${ref}`, token, undefined, controls); }
   catch (error) { if (/\(404\)/.test(error.message)) return null; throw error; }
 }
 export async function readOwnershipMarker(fetcher, token, settings, name, controls) {
@@ -932,6 +949,24 @@ export async function readOwnershipMarker(fetcher, token, settings, name, contro
     if (typeof file?.content !== 'string') return null;
     return JSON.parse(Buffer.from(file.content, 'base64').toString('utf8'));
   } catch (error) { if (/\(404\)/.test(error.message)) return null; throw error; }
+}
+async function commitSourceUpdate(fetcher, token, settings, name, source, message, controls) {
+  const ref = await gh(fetcher, `/repos/${settings.org}/${name}/git/ref/heads/main`, token, undefined, controls);
+  const parentSha = ref.object?.sha;
+  if (!parentSha) throw new Error(`Repository ${name} has no main reference to fast-forward.`);
+  const parent = await gh(fetcher, `/repos/${settings.org}/${name}/git/commits/${parentSha}`, token, undefined, controls);
+  if (!parent.tree?.sha) throw new Error(`Repository ${name} has incomplete commit evidence.`);
+  const entries = [];
+  for (const file of source.files) {
+    const blob = await gh(fetcher, `/repos/${settings.org}/${name}/git/blobs`, token, { method: 'POST', body: JSON.stringify({ content: file.content, encoding: 'utf-8' }) }, controls);
+    if (!blob.sha) throw new Error('Synthetic source blob is incomplete.');
+    entries.push({ path: file.path, mode: '100644', type: 'blob', sha: blob.sha });
+  }
+  const tree = await gh(fetcher, `/repos/${settings.org}/${name}/git/trees`, token, { method: 'POST', body: JSON.stringify({ base_tree: parent.tree.sha, tree: entries }) }, controls);
+  const who = { name: 'Synthetic Demo', email: 'synthetic-demo@example.invalid', date: new Date().toISOString() };
+  const commit = await gh(fetcher, `/repos/${settings.org}/${name}/git/commits`, token, { method: 'POST', body: JSON.stringify({ message, tree: tree.sha, parents: [parentSha], author: who, committer: who }) }, controls);
+  await gh(fetcher, `/repos/${settings.org}/${name}/git/refs/heads/main`, token, { method: 'PATCH', body: JSON.stringify({ sha: commit.sha, force: false }) }, controls);
+  return { commitSha: commit.sha, parentSha };
 }
 export function stepsThrough(steps, targetId) {
   const index = steps.findIndex((step) => step.id === targetId);
@@ -947,7 +982,8 @@ export async function reconcileStep(fetcher, env, scenario, targetId, controls =
   const byKey = new Map(scenario.services.services.map((service) => [service.key, service]));
   const created = []; const adopted = [];
   const introduce = step.introduceServices || [];
-  const total = introduce.length; let completed = 0;
+  const update = step.updateServices || [];
+  const total = introduce.length + update.length; let completed = 0;
   for (const key of introduce) {
     const service = byKey.get(key);
     if (!service) throw new Error(`Refusing a repository outside the service catalog: ${key}`);
@@ -960,7 +996,7 @@ export async function reconcileStep(fetcher, env, scenario, targetId, controls =
       adopted.push({ service: key, repositoryId: existing.id ?? null, nodeId: existing.node_id ?? null });
     } else {
       const references = (step.sourceReferences || {})[key] || [];
-      const source = catalogSource(key, references, compiled.scenarioId, service.template);
+      const source = catalogSource(key, references, compiled.scenarioId, service.template, (step.releaseTags || {})[key] || "v001");
       const result = await commitInitialSource(fetcher, t.GH_RESET_TOKEN, settings, key, source, requestControls);
       const version = (step.releaseTags || {})[key];
       const tag = version ? `${key}-${version}` : null;
@@ -970,7 +1006,28 @@ export async function reconcileStep(fetcher, env, scenario, targetId, controls =
     completed += 1;
     if (controls.onProgress) await controls.onProgress({ completed, total, label: existing ? `Adopted repository ${key}` : `Created repository ${key}` });
   }
-  return { step: step.id, checksum: compiled.checksum, created, adopted };
+  const updated = [];
+  for (const key of update) {
+    const service = byKey.get(key);
+    if (!service) throw new Error(`Refusing a repository outside the service catalog: ${key}`);
+    const marker = await readOwnershipMarker(fetcher, t.GH_RESET_TOKEN, settings, key, requestControls);
+    if (!marker || marker.scenarioId !== compiled.scenarioId || marker.service !== key) throw new Error(`Repository ${settings.org}/${key} is not marked as owned by this scenario; refusing to fast-forward it.`);
+    const references = compiled.services.find((item) => item.key === key)?.references || [];
+    const version = (step.releaseTags || {})[key] || 'v001';
+    const tag = `${key}-${version}`;
+    const already = await refIfPresent(fetcher, t.GH_RESET_TOKEN, settings, key, `tags/${tag}`, requestControls);
+    if (already) {
+      updated.push({ service: key, tag, commitSha: already.object?.sha ?? null, alreadyApplied: true });
+    } else {
+      const source = catalogSource(key, references, compiled.scenarioId, service.template, version);
+      const result = await commitSourceUpdate(fetcher, t.GH_RESET_TOKEN, settings, key, source, `Advance ${key} to ${version}`, requestControls);
+      await gh(fetcher, `/repos/${settings.org}/${key}/git/refs`, t.GH_RESET_TOKEN, { method: 'POST', body: JSON.stringify({ ref: `refs/tags/${tag}`, sha: result.commitSha }) }, requestControls);
+      updated.push({ service: key, ...result, tag, references });
+    }
+    completed += 1;
+    if (controls.onProgress) await controls.onProgress({ completed, total, label: `${already ? 'Already at' : 'Fast-forwarded'} ${key} ${version}` });
+  }
+  return { step: step.id, checksum: compiled.checksum, created, adopted, updated };
 }
 export async function scenarioStatus(fetcher, env, scenario, controls = {}) {
   const settings = settingsFor(env); const t = tokensFor('scenario', env);
