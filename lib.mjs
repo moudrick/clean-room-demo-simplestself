@@ -42,6 +42,7 @@ export function tokensFor(command, env) {
   const namesByCommand = {
     audit: ['GH_DEMO_TOKEN', 'LD_DEMO_TOKEN'],
     baseline: ['GH_DEMO_TOKEN', 'LD_DEMO_TOKEN'],
+    bootstrap: ['LD_RESET_TOKEN'],
     doctor: ['GH_DEMO_TOKEN', 'GH_RESET_TOKEN', 'LD_DEMO_TOKEN', 'LD_RESET_TOKEN'],
     recreate: ['GH_RESET_TOKEN', 'LD_RESET_TOKEN'],
     refresh: ['GH_RESET_TOKEN', 'LD_RESET_TOKEN'],
@@ -691,6 +692,71 @@ export async function baseline(fetcher, env, controls = {}) {
     project: { key: project.key, id: project._id, name: project.name ?? null },
     flags, repositories
   };
+}
+export const CATALOG_MAX_FLAGS = 45;
+export const PRESENTATION_ROLES = {
+  'not-started': 3, 'partial-rollout': 6, 'rolled-out-still-referenced': 5, 'cleanup-draining': 4,
+  'protected-live-archive-candidate': 2, 'archived': 2, 'rolled-back-or-limited': 2
+};
+export const CATALOG_SIZE = Object.values(PRESENTATION_ROLES).reduce((total, count) => total + count, 0);
+export function assertFlagCatalog(catalog) {
+  if (!catalog || catalog.schemaVersion !== 1 || !Array.isArray(catalog.flags)) throw new Error('Flag catalog is missing or declares an unsupported schema version.');
+  const flags = catalog.flags;
+  if (flags.length !== CATALOG_SIZE) throw new Error(`Flag catalog must contain exactly ${CATALOG_SIZE} flags; found ${flags.length}.`);
+  if (flags.length > CATALOG_MAX_FLAGS) throw new Error(`Flag catalog exceeds the maximum of ${CATALOG_MAX_FLAGS} flags.`);
+  const keys = new Set();
+  for (const flag of flags) {
+    if (typeof flag.key !== 'string' || !/^demo-[a-z0-9]+(-[a-z0-9]+)*$/.test(flag.key)) throw new Error(`Refusing an unsafe catalog flag key: ${String(flag.key)}`);
+    if (keys.has(flag.key)) throw new Error(`Duplicate catalog flag key: ${flag.key}`);
+    keys.add(flag.key);
+    if (typeof flag.name !== 'string' || !flag.name) throw new Error(`Flag ${flag.key} must declare a name.`);
+    if (typeof flag.temporary !== 'boolean') throw new Error(`Flag ${flag.key} must declare temporary as a boolean.`);
+    if (!Object.hasOwn(PRESENTATION_ROLES, flag.presentationRole)) throw new Error(`Flag ${flag.key} declares an unknown presentation role.`);
+  }
+  for (const key of FLAGS) {
+    const flag = flags.find((item) => item.key === key);
+    if (!flag) throw new Error(`Catalog must adopt the pre-existing flag ${key} rather than dropping it.`);
+    if (flag.cohort !== 'pre-campaign') throw new Error(`Pre-existing flag ${key} must be marked with cohort pre-campaign.`);
+  }
+  const counts = {};
+  for (const flag of flags) counts[flag.presentationRole] = (counts[flag.presentationRole] || 0) + 1;
+  for (const [role, expected] of Object.entries(PRESENTATION_ROLES)) {
+    if (counts[role] !== expected) throw new Error(`Presentation role ${role} must cover exactly ${expected} flags; found ${counts[role] || 0}.`);
+  }
+  const guarded = flags.filter((flag) => flag.protected === true);
+  if (guarded.length !== 2) throw new Error('Exactly two protected live-demo archive candidates are required.');
+  if (guarded.some((flag) => flag.presentationRole !== 'protected-live-archive-candidate')) throw new Error('Protected flags must declare the protected-live-archive-candidate role.');
+  const rehearsal = flags.filter((flag) => flag.rehearsalArchiveCandidate === true);
+  if (rehearsal.length !== 2) throw new Error('Exactly two reserved rehearsal archive candidates are required.');
+  if (rehearsal.some((flag) => flag.protected === true)) throw new Error('Rehearsal archive candidates must not be the protected live pair.');
+  return { keys: [...keys], protected: guarded.map((flag) => flag.key), rehearsal: rehearsal.map((flag) => flag.key) };
+}
+export async function bootstrapFlags(fetcher, env, confirmation, catalog, controls = {}) {
+  const settings = settingsFor(env); requireConfirmation(confirmation, settings.project); const t = tokensFor('bootstrap', env);
+  assertFlagCatalog(catalog);
+  const scenarioId = controls.scenarioId;
+  if (typeof scenarioId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(scenarioId)) throw new Error('Bootstrap requires the campaign scenario identifier from campaign.json.');
+  const requestControls = controls.request || {};
+  const listed = await ld(fetcher, `/api/v2/flags/${settings.project}?limit=100`, t.LD_RESET_TOKEN, undefined, requestControls);
+  const existing = new Map((Array.isArray(listed.items) ? listed.items : []).map((item) => [item.key, item]));
+  const catalogKeys = new Set(catalog.flags.map((flag) => flag.key));
+  const unknown = [...existing.keys()].filter((key) => !catalogKeys.has(key));
+  if (unknown.length) throw new Error(`Refusing to bootstrap: ${unknown.length} flag(s) in project ${settings.project} are absent from the catalog. Resolve the drift before creating anything.`);
+  const created = []; const adopted = []; const total = catalog.flags.length; let completed = 0;
+  for (const flag of catalog.flags) {
+    const present = existing.get(flag.key);
+    if (present) adopted.push({ key: flag.key, id: present._id ?? null });
+    else {
+      const body = { key: flag.key, name: flag.name, description: flag.description ?? '', temporary: flag.temporary, tags: [scenarioId], variations: [{ value: true }, { value: false }] };
+      let result;
+      try { result = await ld(fetcher, `/api/v2/flags/${settings.project}`, t.LD_RESET_TOKEN, { method: 'POST', body: JSON.stringify(body) }, requestControls); }
+      catch (error) { throw new Error(`LD_RESET_TOKEN create flag ${settings.project}/${flag.key} failed: ${error.message}`); }
+      created.push({ key: flag.key, id: result._id ?? null });
+    }
+    completed += 1;
+    if (controls.onProgress) await controls.onProgress({ completed, total, label: present ? `Adopted existing flag ${flag.key}` : `Created flag ${flag.key}` });
+  }
+  return { created, adopted };
 }
 export async function auditFlag(fetcher, token, settings, key) {
   const search = await gh(fetcher, `/search/code?q=${encodeURIComponent(`${key} org:${settings.org}`)}&per_page=100`, token);

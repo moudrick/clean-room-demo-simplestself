@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "scenarioId": "campaign-2026-08-16",
   "campaignStart": "2026-08-16T10:09:38.558Z",
-  "capturedAt": "2026-08-16T10:09:38.558Z",
+  "capturedAt": "2026-08-16T10:17:44.719Z",
   "organization": "featureflag-extensiveconsumer-demo-org",
   "project": {
     "key": "featureflag-extensiveconsumer-demo-key",
@@ -11,6 +11,33 @@
   },
   "flags": [
     {
+      "key": "demo-cart-v2",
+      "name": "Cart v2",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:16:59.179Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:16:59.179Z"
+    },
+    {
+      "key": "demo-catalog-enrichment",
+      "name": "Catalog enrichment",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:13.187Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:13.187Z"
+    },
+    {
+      "key": "demo-checkout-address-validation",
+      "name": "Checkout address validation",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:22.627Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:22.627Z"
+    },
+    {
       "key": "demo-checkout-rollout",
       "name": "demo-checkout-rollout",
       "kind": "boolean",
@@ -18,6 +45,51 @@
       "createdAt": "2026-08-15T21:43:40.964Z",
       "ageDaysAtCapture": 0,
       "minimumAgeReachedAt": "2026-09-14T21:43:40.964Z"
+    },
+    {
+      "key": "demo-email-notifications-v2",
+      "name": "Email notifications v2",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:01.609Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:01.609Z"
+    },
+    {
+      "key": "demo-express-returns",
+      "name": "Express returns",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:31.666Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:31.666Z"
+    },
+    {
+      "key": "demo-fraud-screening",
+      "name": "Fraud screening",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:23.151Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:23.151Z"
+    },
+    {
+      "key": "demo-identity-passkeys",
+      "name": "Identity passkeys",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:12.098Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:12.098Z"
+    },
+    {
+      "key": "demo-inventory-reservation",
+      "name": "Inventory reservation",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:00.524Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:00.524Z"
     },
     {
       "key": "demo-legacy-profile",
@@ -29,6 +101,60 @@
       "minimumAgeReachedAt": "2026-09-14T21:43:43.350Z"
     },
     {
+      "key": "demo-order-history-v2",
+      "name": "Order history v2",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:21.471Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:21.471Z"
+    },
+    {
+      "key": "demo-payment-retry",
+      "name": "Payment retry",
+      "kind": "boolean",
+      "temporary": false,
+      "createdAt": "2026-08-16T10:17:01.061Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:01.061Z"
+    },
+    {
+      "key": "demo-personalized-home",
+      "name": "Personalized home",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:16:59.975Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:16:59.975Z"
+    },
+    {
+      "key": "demo-pricing-engine-v2",
+      "name": "Pricing engine v2",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:00.804Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:00.804Z"
+    },
+    {
+      "key": "demo-profile-preferences",
+      "name": "Profile preferences",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:22.082Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:22.082Z"
+    },
+    {
+      "key": "demo-recommendation-model-v2",
+      "name": "Recommendation model v2",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:22.888Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:22.888Z"
+    },
+    {
       "key": "demo-retired-banner",
       "name": "demo-retired-banner",
       "kind": "boolean",
@@ -36,6 +162,69 @@
       "createdAt": "2026-08-15T21:43:52.708Z",
       "ageDaysAtCapture": 0,
       "minimumAgeReachedAt": "2026-09-14T21:43:52.708Z"
+    },
+    {
+      "key": "demo-search-ranking-v3",
+      "name": "Search ranking v3",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:16:59.442Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:16:59.442Z"
+    },
+    {
+      "key": "demo-shipping-estimates",
+      "name": "Shipping estimates",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:01.352Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:01.352Z"
+    },
+    {
+      "key": "demo-sms-notifications",
+      "name": "SMS notifications",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:11.478Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:11.478Z"
+    },
+    {
+      "key": "demo-storefront-navigation",
+      "name": "Storefront navigation",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:32.219Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:32.219Z"
+    },
+    {
+      "key": "demo-subscription-pause",
+      "name": "Subscription pause",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:12.671Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:12.671Z"
+    },
+    {
+      "key": "demo-support-assistant",
+      "name": "Support assistant",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:12.940Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:12.940Z"
+    },
+    {
+      "key": "demo-tax-calculation-v2",
+      "name": "Tax calculation v2",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-16T10:17:31.050Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-15T10:17:31.050Z"
     }
   ],
   "repositories": [

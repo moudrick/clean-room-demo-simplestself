@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence } from '../lib.mjs';
+import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE } from '../lib.mjs';
+const catalogFile = JSON.parse(fs.readFileSync(new URL('../scenario/flags.json', import.meta.url), 'utf8'));
 
 const env = { GH_ORG: 'example-demo-org', LD_PROJECT_KEY: 'example-demo-project', GH_RESET_TOKEN: 'gh-reset-secret', GH_DEMO_TOKEN: 'gh-demo-secret', LD_RESET_TOKEN: 'ld-reset-secret', LD_DEMO_TOKEN: 'ld-demo-secret' };
 test('fixed scope rejects another organization, project, repository, flag, or environment set', () => {
@@ -295,7 +296,7 @@ test('CLI exposes audit and removes the pre-release run command', () => {
   const cli = fs.readFileSync(new URL('../demo.mjs', import.meta.url), 'utf8');
   assert.equal(typeof audit, 'function'); assert.equal(typeof refresh, 'function'); assert.equal(typeof baseline, 'function');
   assert.match(cli, /command === 'audit'/); assert.match(cli, /command === 'baseline'/);
-  assert.match(cli, /<doctor\|baseline\|recreate\|refresh\|audit\|destroy>/); assert.equal(cli.includes("command === 'run'"), false);
+  assert.match(cli, /command === 'bootstrap'/); assert.match(cli, /<doctor\|baseline\|bootstrap\|recreate\|refresh\|audit\|destroy>/); assert.equal(cli.includes("command === 'run'"), false);
 });
 test('project creation requests precisely the four demo environments', async () => {
   const calls = []; const fetcher = async (url, options) => { calls.push({ url: String(url), options }); const body = calls.length === 1 ? { key: env.LD_PROJECT_KEY, _id: 'generation-1' } : { items: ENVIRONMENTS }; return { ok: true, status: 200, url: String(url), json: async () => body }; };
@@ -504,6 +505,65 @@ test('baseline reads identity and age with demo tokens only and never mutates', 
   assert.equal(result.repositories.length, REPOS.length); assert.equal(result.repositories[0].headShaAtBaseline, 'abc123');
   assert.equal(calls.every((call) => call.method === 'GET'), true);
   assert.equal(calls.some((call) => call.auth === 'ld-reset-secret' || call.auth === 'Bearer gh-reset-secret'), false);
+});
+test('the tracked flag catalog satisfies the campaign contract', () => {
+  const result = assertFlagCatalog(catalogFile);
+  assert.equal(CATALOG_SIZE, 24); assert.equal(result.keys.length, 24);
+  assert.deepEqual([...result.protected].sort(), ['demo-express-returns', 'demo-profile-preferences']);
+  assert.equal(result.rehearsal.length, 2);
+  for (const key of FLAGS) assert.ok(result.keys.includes(key), key);
+});
+test('flag catalog validation refuses malformed, unsafe, or contract-breaking catalogs', () => {
+  const clone = () => JSON.parse(JSON.stringify(catalogFile));
+  assert.throws(() => assertFlagCatalog({ ...clone(), schemaVersion: 2 }), /schema version/);
+  const short = clone(); short.flags.pop(); assert.throws(() => assertFlagCatalog(short), /exactly 24 flags/);
+  const unsafe = clone(); unsafe.flags[5].key = 'other-project-flag'; assert.throws(() => assertFlagCatalog(unsafe), /unsafe catalog flag key/);
+  const duplicate = clone(); duplicate.flags[5].key = duplicate.flags[4].key; assert.throws(() => assertFlagCatalog(duplicate), /Duplicate catalog flag key/);
+  const dropped = clone();
+  dropped.flags = dropped.flags.filter((flag) => flag.key !== 'demo-legacy-profile');
+  dropped.flags.push({ key: 'demo-filler', name: 'Filler', temporary: true, cohort: 'bootstrap', presentationRole: 'cleanup-draining' });
+  assert.throws(() => assertFlagCatalog(dropped), /must adopt the pre-existing flag demo-legacy-profile/);
+  const roles = clone(); roles.flags.find((flag) => flag.presentationRole === 'not-started').presentationRole = 'archived';
+  assert.throws(() => assertFlagCatalog(roles), /must cover exactly/);
+  const guarded = clone(); guarded.flags.find((flag) => flag.protected === true).protected = false;
+  assert.throws(() => assertFlagCatalog(guarded), /two protected live-demo/);
+});
+test('bootstrap creates only missing catalog flags and adopts existing ones by identity', async () => {
+  const calls = [];
+  const fetcher = async (url, options = {}) => {
+    const parsed = new URL(url); const method = options.method || 'GET';
+    calls.push({ path: parsed.pathname, method, auth: options.headers?.Authorization, body: options.body });
+    if (method === 'GET') return { ok: true, status: 200, url: String(url), headers: {}, json: async () => ({ items: FLAGS.map((key, index) => ({ key, _id: `existing-${index}` })) }) };
+    return { ok: true, status: 200, url: String(url), headers: {}, json: async () => ({ key: JSON.parse(options.body).key, _id: 'new-id' }) };
+  };
+  const result = await bootstrapFlags(fetcher, env, env.LD_PROJECT_KEY, catalogFile, { scenarioId: 'campaign-2026-08-16' });
+  assert.equal(result.adopted.length, 3); assert.equal(result.created.length, 21);
+  const posts = calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, 21);
+  assert.equal(posts.some((call) => FLAGS.includes(JSON.parse(call.body).key)), false);
+  assert.equal(calls.some((call) => ['DELETE', 'PUT', 'PATCH'].includes(call.method)), false);
+  assert.equal(calls.every((call) => call.path.startsWith('/api/v2/flags/')), true);
+  assert.equal(calls.some((call) => call.auth === 'ld-demo-secret' || call.auth === 'Bearer gh-reset-secret'), false);
+  const first = JSON.parse(posts[0].body);
+  assert.deepEqual(first.tags, ['campaign-2026-08-16']);
+  assert.deepEqual(first.variations, [{ value: true }, { value: false }]);
+  assert.equal(typeof first.temporary, 'boolean');
+});
+test('repeated bootstrap is a verified no-op that creates nothing', async () => {
+  const calls = [];
+  const fetcher = async (url, options = {}) => {
+    calls.push({ method: options.method || 'GET' });
+    return { ok: true, status: 200, url: String(url), headers: {}, json: async () => ({ items: catalogFile.flags.map((flag, index) => ({ key: flag.key, _id: `id-${index}` })) }) };
+  };
+  const result = await bootstrapFlags(fetcher, env, env.LD_PROJECT_KEY, catalogFile, { scenarioId: 'campaign-2026-08-16' });
+  assert.equal(result.created.length, 0); assert.equal(result.adopted.length, 24);
+  assert.equal(calls.filter((call) => call.method === 'POST').length, 0);
+});
+test('bootstrap refuses unknown project drift, inexact confirmation, and a missing scenario identity', async () => {
+  const fetcher = async (url) => ({ ok: true, status: 200, url: String(url), headers: {}, json: async () => ({ items: [{ key: 'someone-elses-flag', _id: 'x' }] }) });
+  await assert.rejects(() => bootstrapFlags(fetcher, env, env.LD_PROJECT_KEY, catalogFile, { scenarioId: 'campaign-2026-08-16' }), /absent from the catalog/);
+  await assert.rejects(() => bootstrapFlags(fetcher, env, 'wrong-key', catalogFile, { scenarioId: 'campaign-2026-08-16' }), /exact configured project key/);
+  await assert.rejects(() => bootstrapFlags(fetcher, env, env.LD_PROJECT_KEY, catalogFile, {}), /scenario identifier/);
 });
 test('campaign lock leaves read-only audit unaffected', async () => {
   const fetcher = async (url) => ({ ok: true, status: 200, url: String(url), headers: {}, json: async () => ({ items: [], total_count: 0 }) });

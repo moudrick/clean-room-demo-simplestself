@@ -2,6 +2,13 @@
 
 Experimental synthetic feature-flag reference demo. Its destructive boundary is exactly three repositories (`demo-orders`, `demo-storefront`, `demo-profile`) in configured `GH_ORG` and the entire dedicated, non-default LaunchDarkly project `LD_PROJECT_KEY`. It never creates or deletes the surrounding organization or account.
 
+> **A campaign is active.** `CAMPAIGN_LOCK=true` in `.env` makes `recreate`, `refresh`, and
+> `destroy` refuse before any preflight, because this sandbox now holds evidence that cannot be
+> recreated: repository history, flag identity, flag age, evaluations, and search indexing. The
+> destructive snippets below are retained for future disposable sandboxes and will fail closed
+> while the lock is set. Normal campaign operation uses `doctor`, `baseline`, `bootstrap`, and
+> `audit`. See `SPEC.md` for the lock and its emergency-recovery path.
+
 Complete [one-time credential setup](CREDENTIALS.md). Run every snippet from the repository root in Bash on Linux, macOS, or Git Bash on Windows. The snippets use relative forward-slash paths and basic shell syntax shared by all three environments. Load the trusted local `.env` into the current shell before using its project key for destructive confirmation:
 
 ```bash

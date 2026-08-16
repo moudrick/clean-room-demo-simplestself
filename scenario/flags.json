@@ -1,0 +1,235 @@
+{
+  "schemaVersion": 1,
+  "description": "Synthetic feature-flag catalog for the campaign sandbox. All names, owners, and descriptions are fictional and public-safe. Presentation roles describe the state each flag is intended to reach at the mature live-demo checkpoint; they are not the flag's current state.",
+  "flags": [
+    {
+      "key": "demo-checkout-rollout",
+      "name": "Checkout rollout",
+      "description": "Gradual rollout of the rebuilt checkout submission path.",
+      "owner": "checkout",
+      "temporary": true,
+      "cohort": "pre-campaign",
+      "presentationRole": "rolled-out-still-referenced",
+      "anchor": "Broadly consumed across services and carries the bounded Production load probe. Stays active and referenced for the whole campaign."
+    },
+    {
+      "key": "demo-legacy-profile",
+      "name": "Legacy profile",
+      "description": "Serves the previous profile rendering path while the replacement is finished.",
+      "owner": "identity",
+      "temporary": true,
+      "cohort": "pre-campaign",
+      "presentationRole": "cleanup-draining",
+      "anchor": "The young-flag/old-code dangling-reference case. Must never be presented as safe to archive.",
+      "neverArchive": true
+    },
+    {
+      "key": "demo-retired-banner",
+      "name": "Retired banner",
+      "description": "Site-wide promotional banner retained only until the campaign ended.",
+      "owner": "growth",
+      "temporary": true,
+      "cohort": "pre-campaign",
+      "presentationRole": "archived",
+      "anchor": "Becomes a demonstrably archived case once its real evidence gates pass."
+    },
+    {
+      "key": "demo-cart-v2",
+      "name": "Cart v2",
+      "description": "Replacement cart aggregation and totals service.",
+      "owner": "checkout",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "rolled-out-still-referenced"
+    },
+    {
+      "key": "demo-search-ranking-v3",
+      "name": "Search ranking v3",
+      "description": "Third-generation relevance ranking for catalog search.",
+      "owner": "search",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "cleanup-draining"
+    },
+    {
+      "key": "demo-personalized-home",
+      "name": "Personalized home",
+      "description": "Personalized storefront landing page. Rolled back after a regression.",
+      "owner": "growth",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "rolled-back-or-limited",
+      "anchor": "The rollback/abandonment case: enabled, then reverted, then left dormant."
+    },
+    {
+      "key": "demo-inventory-reservation",
+      "name": "Inventory reservation",
+      "description": "Soft reservation of stock during checkout.",
+      "owner": "fulfilment",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "partial-rollout"
+    },
+    {
+      "key": "demo-pricing-engine-v2",
+      "name": "Pricing engine v2",
+      "description": "Rules-based replacement for the legacy pricing calculator.",
+      "owner": "pricing",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "partial-rollout"
+    },
+    {
+      "key": "demo-payment-retry",
+      "name": "Payment retry",
+      "description": "Operational control for automatic retry of soft-declined payments.",
+      "owner": "payments",
+      "temporary": false,
+      "cohort": "bootstrap",
+      "presentationRole": "rolled-out-still-referenced",
+      "anchor": "The permanent operational control. Never a cleanup candidate; excluded from archive gates by intent."
+    },
+    {
+      "key": "demo-shipping-estimates",
+      "name": "Shipping estimates",
+      "description": "Carrier-derived delivery estimates on the product page.",
+      "owner": "fulfilment",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "partial-rollout"
+    },
+    {
+      "key": "demo-email-notifications-v2",
+      "name": "Email notifications v2",
+      "description": "Templated transactional email delivery pipeline.",
+      "owner": "notifications",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "cleanup-draining",
+      "rehearsalArchiveCandidate": true
+    },
+    {
+      "key": "demo-sms-notifications",
+      "name": "SMS notifications",
+      "description": "Order status by SMS, deliberately limited to two regions.",
+      "owner": "notifications",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "rolled-back-or-limited",
+      "anchor": "The intentionally limited flag: a partial rollout that is finished, not stalled."
+    },
+    {
+      "key": "demo-identity-passkeys",
+      "name": "Identity passkeys",
+      "description": "Passkey sign-in alongside the existing password flow.",
+      "owner": "identity",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "partial-rollout"
+    },
+    {
+      "key": "demo-subscription-pause",
+      "name": "Subscription pause",
+      "description": "Self-service pause and resume for recurring subscriptions.",
+      "owner": "subscriptions",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "not-started"
+    },
+    {
+      "key": "demo-support-assistant",
+      "name": "Support assistant",
+      "description": "Assisted reply suggestions in the support console.",
+      "owner": "support",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "not-started"
+    },
+    {
+      "key": "demo-catalog-enrichment",
+      "name": "Catalog enrichment",
+      "description": "Supplementary attributes merged into catalog records.",
+      "owner": "catalog",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "rolled-out-still-referenced"
+    },
+    {
+      "key": "demo-order-history-v2",
+      "name": "Order history v2",
+      "description": "Paginated order history with combined shipment views.",
+      "owner": "orders",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "rolled-out-still-referenced"
+    },
+    {
+      "key": "demo-profile-preferences",
+      "name": "Profile preferences",
+      "description": "Consolidated notification and privacy preferences in the profile.",
+      "owner": "identity",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "protected-live-archive-candidate",
+      "anchor": "Protected live-demo archive candidate. Never archived during the screenshot schedule or rehearsal.",
+      "protected": true
+    },
+    {
+      "key": "demo-checkout-address-validation",
+      "name": "Checkout address validation",
+      "description": "Inline address verification before payment authorisation.",
+      "owner": "checkout",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "partial-rollout"
+    },
+    {
+      "key": "demo-recommendation-model-v2",
+      "name": "Recommendation model v2",
+      "description": "Replacement ranking model for related-product recommendations.",
+      "owner": "recommendations",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "partial-rollout"
+    },
+    {
+      "key": "demo-fraud-screening",
+      "name": "Fraud screening",
+      "description": "Additional screening step for high-risk orders.",
+      "owner": "payments",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "not-started"
+    },
+    {
+      "key": "demo-tax-calculation-v2",
+      "name": "Tax calculation v2",
+      "description": "Jurisdiction-aware tax calculation replacing the flat-rate table.",
+      "owner": "pricing",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "cleanup-draining",
+      "rehearsalArchiveCandidate": true
+    },
+    {
+      "key": "demo-express-returns",
+      "name": "Express returns",
+      "description": "Label-free express returns for eligible orders.",
+      "owner": "fulfilment",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "protected-live-archive-candidate",
+      "anchor": "Protected live-demo archive candidate. Never archived during the screenshot schedule or rehearsal.",
+      "protected": true
+    },
+    {
+      "key": "demo-storefront-navigation",
+      "name": "Storefront navigation",
+      "description": "Restructured primary navigation for the storefront.",
+      "owner": "growth",
+      "temporary": true,
+      "cohort": "bootstrap",
+      "presentationRole": "archived"
+    }
+  ]
+}

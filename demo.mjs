@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { doctor, recreate, refresh, destroy, audit, baseline, mergeCampaign, settingsFor, REPOS, FLAGS, ENVIRONMENTS, progressLine, redact } from './lib.mjs';
+import { doctor, recreate, refresh, destroy, audit, baseline, bootstrapFlags, mergeCampaign, settingsFor, REPOS, FLAGS, ENVIRONMENTS, progressLine, redact } from './lib.mjs';
 
 function loadEnv() {
   const file = '.env';
@@ -47,5 +47,17 @@ try {
     for (const flag of merged.flags) console.log(`${flag.key} | ${flag.createdAt} | ${flag.ageDaysAtCapture} | ${flag.minimumAgeReachedAt}`);
     console.log('REPOSITORY | CREATED (UTC) | DEFAULT BRANCH | HEAD SHA AT BASELINE');
     for (const repo of merged.repositories) console.log(`${repo.name} | ${repo.createdAt} | ${repo.defaultBranch} | ${repo.headShaAtBaseline}`);
-  } else throw new Error('Usage: node demo.mjs <doctor|baseline|recreate|refresh|audit|destroy> [--confirm $LD_PROJECT_KEY]');
+  } else if (command === 'bootstrap') {
+    const file = 'campaign.json';
+    if (!fs.existsSync(file)) throw new Error('Run "node demo.mjs baseline" before bootstrap so the campaign identity exists.');
+    const previous = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const catalog = JSON.parse(fs.readFileSync('scenario/flags.json', 'utf8'));
+    const result = await bootstrapFlags(fetch, env, confirmation, catalog, { scenarioId: previous.scenarioId, onProgress: (state) => console.log(progressLine(state)) });
+    console.log(`Created ${result.created.length} flag(s); adopted ${result.adopted.length} existing flag(s) by identity. No flag was deleted or recreated.`);
+    const merged = mergeCampaign(previous, await baseline(fetch, env));
+    fs.writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`);
+    console.log(`Updated ${file}: ${merged.flags.length} flags recorded with real identities and creation times.`);
+    console.log('FLAG | CREATED (UTC) | 30-DAY AGE REACHED');
+    for (const flag of merged.flags) console.log(`${flag.key} | ${flag.createdAt} | ${flag.minimumAgeReachedAt}`);
+  } else throw new Error('Usage: node demo.mjs <doctor|baseline|bootstrap|recreate|refresh|audit|destroy> [--confirm $LD_PROJECT_KEY]');
 } catch (error) { console.error(`Error: ${redact(error, secrets)}`); process.exitCode = 1; }
