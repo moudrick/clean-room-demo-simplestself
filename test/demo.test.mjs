@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE } from '../lib.mjs';
+import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE, loadScenario, compileScenario, assertSandbox, assertServices, reconcileStep, catalogSource, OWNERSHIP_MARKER } from '../lib.mjs';
 const catalogFile = JSON.parse(fs.readFileSync(new URL('../scenario/flags.json', import.meta.url), 'utf8'));
 
 const env = { GH_ORG: 'example-demo-org', LD_PROJECT_KEY: 'example-demo-project', GH_RESET_TOKEN: 'gh-reset-secret', GH_DEMO_TOKEN: 'gh-demo-secret', LD_RESET_TOKEN: 'ld-reset-secret', LD_DEMO_TOKEN: 'ld-demo-secret' };
@@ -296,7 +296,8 @@ test('CLI exposes audit and removes the pre-release run command', () => {
   const cli = fs.readFileSync(new URL('../demo.mjs', import.meta.url), 'utf8');
   assert.equal(typeof audit, 'function'); assert.equal(typeof refresh, 'function'); assert.equal(typeof baseline, 'function');
   assert.match(cli, /command === 'audit'/); assert.match(cli, /command === 'baseline'/);
-  assert.match(cli, /command === 'bootstrap'/); assert.match(cli, /<doctor\|baseline\|bootstrap\|recreate\|refresh\|audit\|destroy>/); assert.equal(cli.includes("command === 'run'"), false);
+  assert.match(cli, /command === 'bootstrap'/); assert.match(cli, /command === 'scenario'/);
+  assert.match(cli, /<doctor\|baseline\|bootstrap\|scenario\|recreate\|refresh\|audit\|destroy>/); assert.equal(cli.includes("command === 'run'"), false);
 });
 test('project creation requests precisely the four demo environments', async () => {
   const calls = []; const fetcher = async (url, options) => { calls.push({ url: String(url), options }); const body = calls.length === 1 ? { key: env.LD_PROJECT_KEY, _id: 'generation-1' } : { items: ENVIRONMENTS }; return { ok: true, status: 200, url: String(url), json: async () => body }; };
@@ -564,6 +565,91 @@ test('bootstrap refuses unknown project drift, inexact confirmation, and a missi
   await assert.rejects(() => bootstrapFlags(fetcher, env, env.LD_PROJECT_KEY, catalogFile, { scenarioId: 'campaign-2026-08-16' }), /absent from the catalog/);
   await assert.rejects(() => bootstrapFlags(fetcher, env, 'wrong-key', catalogFile, { scenarioId: 'campaign-2026-08-16' }), /exact configured project key/);
   await assert.rejects(() => bootstrapFlags(fetcher, env, env.LD_PROJECT_KEY, catalogFile, {}), /scenario identifier/);
+});
+const scenarioFiles = loadScenario(new URL('../', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
+test('the tracked scenario compiles and satisfies the topology and consumer contract', () => {
+  const model = compileScenario(scenarioFiles);
+  assert.equal(model.scenarioId, 'campaign-2026-08-16');
+  assert.equal(model.services.length, 7);
+  assert.ok(model.deployments.length <= scenarioFiles.sandbox.limits.maxEvaluatorContainers);
+  assert.equal(model.checksum, compileScenario(scenarioFiles).checksum, 'checksum must be stable across compiles');
+  const orders = model.services.find((service) => service.key === 'demo-orders');
+  assert.deepEqual(orders.references, ['demo-checkout-rollout'], 'pre-campaign source references are seeded, not invented');
+});
+test('sandbox validation enforces environment order, criticality, and bounds', () => {
+  const clone = () => JSON.parse(JSON.stringify(scenarioFiles.sandbox));
+  assert.throws(() => assertSandbox({ ...clone(), schemaVersion: 2 }), /schema version/);
+  const reordered = clone(); [reordered.environments[0], reordered.environments[1]] = [reordered.environments[1], reordered.environments[0]];
+  assert.throws(() => assertSandbox(reordered), /environment order/);
+  const uncritical = clone(); uncritical.environments[0].critical = false;
+  assert.throws(() => assertSandbox(uncritical), /must declare critical true/);
+  const overCap = clone(); overCap.limits.maxEvaluatorContainers = 40;
+  assert.throws(() => assertSandbox(overCap), /maxEvaluatorContainers/);
+});
+test('service validation enforces catalog membership and consumer spread', () => {
+  const clone = () => JSON.parse(JSON.stringify(scenarioFiles.services));
+  const unknown = clone(); unknown.services[3].flags.push('demo-not-in-catalog');
+  assert.throws(() => assertServices(unknown, scenarioFiles.catalog, scenarioFiles.sandbox), /consumes unknown flag/);
+  const narrowed = clone();
+  for (const service of narrowed.services) service.flags = service.flags.filter((key) => key !== 'demo-checkout-rollout');
+  assert.throws(() => assertServices(narrowed, scenarioFiles.catalog, scenarioFiles.sandbox), /at least five services/);
+});
+test('the compiler is forward-only and refuses contract violations', () => {
+  const base = () => JSON.parse(JSON.stringify(scenarioFiles));
+  const rerun = base(); rerun.steps.push({ ...JSON.parse(JSON.stringify(rerun.steps[0])), id: 's002', recommendedDate: '2026-08-21' });
+  assert.throws(() => compileScenario(rerun), /re-introduces/);
+  const backward = base(); backward.steps.push({ schemaVersion: 1, id: 's002', recommendedDate: '2026-08-01', cadence: 'three-day' });
+  assert.throws(() => compileScenario(backward), /forward-only/);
+  const daily = base(); daily.steps.push({ schemaVersion: 1, id: 's002', recommendedDate: '2026-08-25', cadence: 'daily' });
+  assert.throws(() => compileScenario(daily), /daily cadence outside the permitted/);
+  const allowedDaily = base(); allowedDaily.steps.push({ schemaVersion: 1, id: 's002', recommendedDate: '2026-08-25', cadence: 'daily', transition: 'staging-canary' });
+  assert.doesNotThrow(() => compileScenario(allowedDaily), 'a named short transition may use daily cadence');
+  const inWindow = base(); inWindow.steps.push({ schemaVersion: 1, id: 's002', recommendedDate: '2026-09-11', cadence: 'daily' });
+  assert.doesNotThrow(() => compileScenario(inWindow), 'the screenshot window permits daily cadence');
+  const overCap = base();
+  overCap.steps[0].deploy.push({ service: 'demo-profile', environment: 'test', traffic: 'rare' });
+  assert.throws(() => compileScenario(overCap), /exceeding the cap of 12/);
+  const undeclared = base(); undeclared.steps[0].sourceReferences['demo-search'] = ['demo-fraud-screening'];
+  assert.throws(() => compileScenario(undeclared), /does not declare it as a consumer/);
+  const gap = base(); gap.steps.push({ schemaVersion: 1, id: 's002', recommendedDate: '2026-08-19', cadence: 'three-day', minGapDaysFromPrevious: 3 });
+  assert.throws(() => compileScenario(gap), /requires at least 3/);
+});
+test('reconcile creates missing catalog repositories and refuses ownership drift', async () => {
+  const calls = [];
+  const make = (markerFor) => async (url, options = {}) => {
+    const parsed = new URL(url); const method = options.method || 'GET';
+    calls.push({ path: parsed.pathname, method });
+    const reply = (body, status = 200) => ({ ok: status < 300, status, url: String(url), headers: {}, json: async () => body });
+    const repository = parsed.pathname.split('/')[3];
+    const marker = markerFor(repository);
+    if (method === 'GET' && /^\/repos\/[^/]+\/[^/]+$/.test(parsed.pathname)) return marker ? reply({ id: 7, node_id: 'R_7' }) : reply({ message: 'Not Found' }, 404);
+    if (parsed.pathname.endsWith(`/contents/${OWNERSHIP_MARKER}`)) return marker ? reply({ content: Buffer.from(JSON.stringify(marker)).toString('base64') }) : reply({ message: 'Not Found' }, 404);
+    if (parsed.pathname.endsWith('/repos') && method === 'POST') return reply({ id: 1, node_id: 'R_1', default_branch: 'main' });
+    if (parsed.pathname.includes('/git/ref/heads/')) return reply({ object: { sha: 'parent-sha' } });
+    if (parsed.pathname.includes('/git/commits/')) return reply({ tree: { sha: 'tree-sha' } });
+    if (parsed.pathname.endsWith('/git/blobs')) return reply({ sha: 'blob-sha' });
+    if (parsed.pathname.endsWith('/git/trees')) return reply({ sha: 'new-tree' });
+    if (parsed.pathname.endsWith('/git/commits')) return reply({ sha: 'commit-sha' });
+    return reply({});
+  };
+  const created = await reconcileStep(make(() => null), env, scenarioFiles, 's001', { confirmation: env.LD_PROJECT_KEY });
+  assert.equal(created.created.length, 4); assert.equal(created.adopted.length, 0);
+  assert.equal(created.created[0].commitSha, 'commit-sha');
+  assert.ok(created.created[0].tag.endsWith('-v001'));
+  assert.equal(calls.some((call) => call.method === 'DELETE'), false, 'the reconciler never deletes');
+  const owned = await reconcileStep(make((name) => ({ scenarioId: 'campaign-2026-08-16', service: name })), env, scenarioFiles, 's001', { confirmation: env.LD_PROJECT_KEY });
+  assert.equal(owned.adopted.length, 4, 'correctly marked repositories are adopted, not recreated');
+  assert.equal(owned.created.length, 0);
+  await assert.rejects(() => reconcileStep(make((name) => ({ scenarioId: 'someone-else', service: name })), env, scenarioFiles, 's001', { confirmation: env.LD_PROJECT_KEY }), /without this scenario's ownership marker/);
+  await assert.rejects(() => reconcileStep(make(() => ({ scenarioId: 'campaign-2026-08-16', service: 'demo-wrong' })), env, scenarioFiles, 's001', { confirmation: env.LD_PROJECT_KEY }), /without this scenario's ownership marker/);
+});
+test('generated catalog source carries the ownership marker and literal flag keys', () => {
+  const source = catalogSource('demo-search', ['demo-search-ranking-v3'], 'campaign-2026-08-16', 'nodejs');
+  const marker = source.files.find((file) => file.path === OWNERSHIP_MARKER);
+  assert.deepEqual(JSON.parse(marker.content), { scenarioId: 'campaign-2026-08-16', service: 'demo-search', template: 'nodejs' });
+  const app = source.files.find((file) => file.path === 'app.mjs');
+  assert.match(app.content, /demo-search-ranking-v3/, 'the literal flag key must appear in executable source');
+  assert.throws(() => catalogSource('demo-payments', [], 'campaign-2026-08-16', 'go'), /not implemented yet/);
 });
 test('campaign lock leaves read-only audit unaffected', async () => {
   const fetcher = async (url) => ({ ok: true, status: 200, url: String(url), headers: {}, json: async () => ({ items: [], total_count: 0 }) });

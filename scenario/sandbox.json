@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "campaign-2026-08-16",
+  "description": "Topology, safety limits, traffic patterns, and cadence windows for the campaign sandbox. Environment display order is Production, Staging, Test, Dev; rollout may still proceed from lower to higher environments.",
+  "environments": [
+    { "key": "production", "critical": true, "clusters": ["prod-eu-west-01", "prod-eu-west-02", "prod-emea-central-04", "prod-sa-east-02", "prod-us-east-02"] },
+    { "key": "staging", "critical": true, "clusters": ["stg-eu-central-01", "stg-eu-central-02"] },
+    { "key": "test", "critical": false, "clusters": ["test-eu-central-01", "test-eu-central-02"] },
+    { "key": "dev", "critical": false, "clusters": ["dev-local-01"] }
+  ],
+  "limits": {
+    "maxRepositories": 20,
+    "maxFlags": 45,
+    "maxEvaluatorContainers": 12,
+    "minEvaluationsPerHour": 10,
+    "maxEvaluationsPerHour": 100000,
+    "maxContextPoolSize": 10000
+  },
+  "trafficPatterns": {
+    "silent": { "kind": "silent" },
+    "rare": { "kind": "batch", "busy": 4, "quiet": 1, "intervalSeconds": 300 },
+    "periodic": { "kind": "batch", "busy": 10, "quiet": 4, "intervalSeconds": 300 },
+    "business-hours-staging": { "kind": "batch", "busy": 30, "quiet": 12, "intervalSeconds": 300 },
+    "business-hours-production": { "kind": "batch", "busy": 100, "quiet": 40, "intervalSeconds": 300 },
+    "paced-probe": { "kind": "paced", "evaluationsPerHour": 1200, "contextPoolSize": 1000 }
+  },
+  "drainPatterns": {
+    "linear-drain-60m": { "kind": "linear", "maxStepMinutes": 5, "completeWithinMinutes": 60 },
+    "cluster-drain-60m": { "kind": "cluster", "completeWithinMinutes": 60 },
+    "environment-drain": { "kind": "environment", "completeWithinMinutes": 60 },
+    "immediate-stop": { "kind": "immediate" }
+  },
+  "cadence": {
+    "default": "three-day",
+    "dailyTransitions": ["staging-canary", "staging-complete", "production-canary", "production-expansion"],
+    "dailyWindows": [
+      { "from": "2026-09-10", "to": "2026-09-13", "reason": "screenshot and indexing window" },
+      { "from": "2026-10-01", "to": "2026-10-04", "reason": "final verification and rehearsal window" }
+    ]
+  },
+  "gates": {
+    "minimumFlagAgeDays": 30,
+    "noTargetingChangesDays": 7,
+    "noEvaluationsDays": 7,
+    "zeroReferenceSearchesRequired": 2,
+    "zeroReferenceSearchGapHours": 24
+  },
+  "milestones": {
+    "campaignStart": "2026-08-16",
+    "slidesFrozen": "2026-09-13",
+    "slidesSent": "2026-09-14",
+    "rehearsal": "2026-10-04",
+    "talk": "2026-10-05"
+  }
+}

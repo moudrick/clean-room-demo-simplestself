@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -43,6 +44,8 @@ export function tokensFor(command, env) {
     audit: ['GH_DEMO_TOKEN', 'LD_DEMO_TOKEN'],
     baseline: ['GH_DEMO_TOKEN', 'LD_DEMO_TOKEN'],
     bootstrap: ['LD_RESET_TOKEN'],
+    reconcile: ['GH_RESET_TOKEN'],
+    scenario: ['GH_DEMO_TOKEN', 'LD_DEMO_TOKEN'],
     doctor: ['GH_DEMO_TOKEN', 'GH_RESET_TOKEN', 'LD_DEMO_TOKEN', 'LD_RESET_TOKEN'],
     recreate: ['GH_RESET_TOKEN', 'LD_RESET_TOKEN'],
     refresh: ['GH_RESET_TOKEN', 'LD_RESET_TOKEN'],
@@ -424,6 +427,9 @@ export const SOURCES = {
 };
 export async function createRepositoryWithSource(fetcher, token, settings, name, source, controls) {
   assertScope({ ...settings, repos: [name, ...REPOS.filter((x) => x !== name)] });
+  return commitInitialSource(fetcher, token, settings, name, source, controls);
+}
+async function commitInitialSource(fetcher, token, settings, name, source, controls) {
   const repository = await gh(fetcher, `/orgs/${settings.org}/repos`, token, { method: 'POST', body: JSON.stringify({ name, private: false, auto_init: true, description: 'Synthetic feature-flag clean-room demo.' }) }, controls);
   const branch = repository.default_branch;
   if (!branch) throw new Error('Created repository has no default branch.');
@@ -444,6 +450,7 @@ export async function createRepositoryWithSource(fetcher, token, settings, name,
   const who = { name: 'Synthetic Demo', email: 'synthetic-demo@example.invalid', date: stamp };
   const commit = await gh(fetcher, `/repos/${settings.org}/${name}/git/commits`, token, { method: 'POST', body: JSON.stringify({ message: 'Add synthetic feature-flag evidence', tree: tree.sha, parents: [parentSha], author: who, committer: who }) }, controls);
   await gh(fetcher, `/repos/${settings.org}/${name}/git/refs/heads/${encodeURIComponent(branch)}`, token, { method: 'PATCH', body: JSON.stringify({ sha: commit.sha, force: false }) }, controls);
+  return { repositoryId: repository.id ?? null, nodeId: repository.node_id ?? null, branch, commitSha: commit.sha };
 }
 function variationId(flag, value) {
   const variation = flag?.variations?.find((entry) => entry.value === value);
@@ -677,7 +684,8 @@ export async function baseline(fetcher, env, controls = {}) {
     ...flagAgeEvidence(item.creationDate, at)
   })).sort((a, b) => a.key.localeCompare(b.key));
   const repositories = [];
-  for (const name of REPOS) {
+  const names = Array.isArray(controls.repositories) && controls.repositories.length ? controls.repositories : REPOS;
+  for (const name of names) {
     const repo = await gh(fetcher, `/repos/${settings.org}/${name}`, t.GH_DEMO_TOKEN, undefined, requestControls);
     const commits = await gh(fetcher, `/repos/${settings.org}/${name}/commits?per_page=1`, t.GH_DEMO_TOKEN, undefined, requestControls);
     const head = Array.isArray(commits) ? commits[0] : null;
@@ -757,6 +765,231 @@ export async function bootstrapFlags(fetcher, env, confirmation, catalog, contro
     if (controls.onProgress) await controls.onProgress({ completed, total, label: present ? `Adopted existing flag ${flag.key}` : `Created flag ${flag.key}` });
   }
   return { created, adopted };
+}
+export const TEMPLATES = ['nodejs', 'typescript', 'go', 'python'];
+export const CADENCES = ['daily', 'three-day'];
+export const PRE_CAMPAIGN_REFERENCES = {
+  'demo-orders': ['demo-checkout-rollout'],
+  'demo-storefront': ['demo-checkout-rollout'],
+  'demo-profile': ['demo-legacy-profile']
+};
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const DNS_LABEL = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const SAFE_DEMO_KEY = /^demo-[a-z0-9]+(-[a-z0-9]+)*$/;
+export const dayNumber = (iso) => {
+  if (!DATE_ONLY.test(iso || '')) throw new Error(`Invalid calendar date: ${String(iso)}`);
+  const value = Date.parse(`${iso}T00:00:00.000Z`);
+  if (!Number.isFinite(value)) throw new Error(`Invalid calendar date: ${iso}`);
+  return Math.floor(value / DAY_MS);
+};
+export function assertSandbox(sandbox) {
+  if (!sandbox || sandbox.schemaVersion !== 1) throw new Error('sandbox.json is missing or declares an unsupported schema version.');
+  const environments = sandbox.environments;
+  if (!Array.isArray(environments) || environments.length !== ENVIRONMENT_KEYS.length) throw new Error('sandbox.json must define exactly the four fixed environments.');
+  environments.forEach((environment, index) => {
+    const expected = ENVIRONMENTS[index];
+    if (environment.key !== expected.key) throw new Error(`sandbox.json environment order must be ${ENVIRONMENT_KEYS.join(', ')}.`);
+    if (environment.critical !== expected.critical) throw new Error(`sandbox.json environment ${environment.key} must declare critical ${expected.critical}.`);
+    if (!Array.isArray(environment.clusters) || !environment.clusters.length || environment.clusters.some((cluster) => !DNS_LABEL.test(cluster))) throw new Error(`sandbox.json environment ${environment.key} has an invalid cluster list.`);
+  });
+  const limits = sandbox.limits || {};
+  for (const [key, min, max] of [['maxRepositories', 1, 20], ['maxFlags', 1, CATALOG_MAX_FLAGS], ['maxEvaluatorContainers', 1, 12]]) {
+    if (!Number.isInteger(limits[key]) || limits[key] < min || limits[key] > max) throw new Error(`sandbox.json limit ${key} must be an integer between ${min} and ${max}.`);
+  }
+  const cadence = sandbox.cadence || {};
+  if (!Array.isArray(cadence.dailyTransitions) || !Array.isArray(cadence.dailyWindows)) throw new Error('sandbox.json must define cadence.dailyTransitions and cadence.dailyWindows.');
+  for (const window of cadence.dailyWindows) if (dayNumber(window.from) > dayNumber(window.to)) throw new Error('sandbox.json contains a daily window that ends before it starts.');
+  return sandbox;
+}
+export function assertServices(services, catalog, sandbox) {
+  if (!services || services.schemaVersion !== 1 || !Array.isArray(services.services)) throw new Error('services.json is missing or declares an unsupported schema version.');
+  const list = services.services;
+  if (list.length > sandbox.limits.maxRepositories) throw new Error(`services.json defines ${list.length} services, exceeding the maximum of ${sandbox.limits.maxRepositories}.`);
+  const flagKeys = new Set(catalog.flags.map((flag) => flag.key));
+  const keys = new Set(); const consumers = new Map();
+  for (const service of list) {
+    if (typeof service.key !== 'string' || !SAFE_DEMO_KEY.test(service.key)) throw new Error(`Refusing an unsafe service key: ${String(service.key)}`);
+    if (keys.has(service.key)) throw new Error(`Duplicate service key: ${service.key}`);
+    keys.add(service.key);
+    if (!TEMPLATES.includes(service.template)) throw new Error(`Service ${service.key} declares an unknown template.`);
+    if (!Number.isInteger(service.wave) || service.wave < 1) throw new Error(`Service ${service.key} declares an invalid wave.`);
+    if (!Array.isArray(service.flags)) throw new Error(`Service ${service.key} must declare a flags array.`);
+    for (const key of service.flags) {
+      if (!flagKeys.has(key)) throw new Error(`Service ${service.key} consumes unknown flag ${key}.`);
+      consumers.set(key, (consumers.get(key) || 0) + 1);
+    }
+  }
+  for (const key of REPOS) if (!keys.has(key)) throw new Error(`services.json must retain the pre-campaign service ${key}.`);
+  if ((consumers.get('demo-checkout-rollout') || 0) < 5) throw new Error('demo-checkout-rollout must be consumed by at least five services so organization-wide search has an obvious multi-repository example.');
+  const counts = [...consumers.values()];
+  const multi = counts.filter((count) => count >= 2 && count <= 4).length;
+  const single = counts.filter((count) => count === 1).length;
+  if (multi < 16) throw new Error(`At least sixteen flags need two to four consuming services; found ${multi}.`);
+  if (single < 6) throw new Error(`At least six flags must be single-service; found ${single}.`);
+  return { keys: [...keys], byKey: new Map(list.map((service) => [service.key, service])) };
+}
+function dailyCadenceAllowed(step, sandbox) {
+  const { dailyTransitions = [], dailyWindows = [] } = sandbox.cadence || {};
+  if (step.transition && dailyTransitions.includes(step.transition)) return true;
+  const day = dayNumber(step.recommendedDate);
+  return dailyWindows.some((window) => day >= dayNumber(window.from) && day <= dayNumber(window.to));
+}
+export function compileScenario({ sandbox, services, catalog, steps }) {
+  assertSandbox(sandbox); assertFlagCatalog(catalog);
+  const { byKey } = assertServices(services, catalog, sandbox);
+  const environmentClusters = new Map(sandbox.environments.map((environment) => [environment.key, environment.clusters]));
+  const patterns = new Set([...Object.keys(sandbox.trafficPatterns || {}), ...Object.keys(sandbox.drainPatterns || {})]);
+  const introduced = new Map();
+  for (const service of services.services) {
+    if (service.cohort !== 'pre-campaign') continue;
+    introduced.set(service.key, { key: service.key, template: service.template, references: [...(PRE_CAMPAIGN_REFERENCES[service.key] || [])], tag: null, introducedBy: 'pre-campaign' });
+  }
+  let deployments = []; const seenIds = new Set(); const applied = []; let previous = null;
+  for (const step of steps) {
+    if (!step || step.schemaVersion !== 1) throw new Error('A scenario step is missing or declares an unsupported schema version.');
+    if (typeof step.id !== 'string' || !/^s\d{3}$/.test(step.id)) throw new Error(`Invalid step id: ${String(step.id)}`);
+    if (seenIds.has(step.id)) throw new Error(`Duplicate step id: ${step.id}`);
+    seenIds.add(step.id);
+    if (!CADENCES.includes(step.cadence)) throw new Error(`Step ${step.id} declares an unknown cadence.`);
+    const day = dayNumber(step.recommendedDate);
+    if (step.cadence === 'daily' && !dailyCadenceAllowed(step, sandbox)) throw new Error(`Step ${step.id} uses daily cadence outside the permitted short transitions and windows.`);
+    if (previous) {
+      const gap = day - dayNumber(previous.recommendedDate);
+      if (gap < 0) throw new Error(`Step ${step.id} is dated before ${previous.id}; steps are forward-only.`);
+      const required = Number.isInteger(step.minGapDaysFromPrevious) ? step.minGapDaysFromPrevious : 0;
+      if (gap < required) throw new Error(`Step ${step.id} falls ${gap} day(s) after ${previous.id} but requires at least ${required}.`);
+    }
+    for (const key of step.introduceServices || []) {
+      const service = byKey.get(key);
+      if (!service) throw new Error(`Step ${step.id} introduces unknown service ${key}.`);
+      if (introduced.has(key)) throw new Error(`Step ${step.id} re-introduces ${key}, which already exists. Resources are never recreated.`);
+      introduced.set(key, { key, template: service.template, references: [], tag: null, introducedBy: step.id });
+    }
+    for (const [key, references] of Object.entries(step.sourceReferences || {})) {
+      const target = introduced.get(key);
+      if (!target) throw new Error(`Step ${step.id} adds source references to ${key}, which is not introduced yet.`);
+      const declared = new Set(byKey.get(key).flags || []);
+      for (const flag of references) if (!declared.has(flag)) throw new Error(`Step ${step.id} references ${flag} in ${key}, which does not declare it as a consumer.`);
+      target.references = [...new Set([...target.references, ...references])].sort();
+    }
+    for (const [key, tag] of Object.entries(step.releaseTags || {})) {
+      const target = introduced.get(key);
+      if (!target) throw new Error(`Step ${step.id} tags ${key}, which is not introduced yet.`);
+      if (typeof tag !== 'string' || !/^v\d{3}$/.test(tag)) throw new Error(`Step ${step.id} declares an invalid release tag for ${key}.`);
+      if (target.tag && target.tag >= tag) throw new Error(`Step ${step.id} moves ${key} to tag ${tag}, which does not advance past ${target.tag}. Tags are immutable and forward-only.`);
+      target.tag = tag;
+    }
+    if (Array.isArray(step.deploy)) {
+      const next = [];
+      for (const tuple of step.deploy) {
+        if (!introduced.has(tuple.service)) throw new Error(`Step ${step.id} deploys ${tuple.service}, which is not introduced yet.`);
+        if (!environmentClusters.has(tuple.environment)) throw new Error(`Step ${step.id} deploys ${tuple.service} to unknown environment ${tuple.environment}.`);
+        if (tuple.traffic && !patterns.has(tuple.traffic)) throw new Error(`Step ${step.id} uses unknown traffic pattern ${tuple.traffic}.`);
+        const identity = `${tuple.service}/${tuple.environment}`;
+        if (next.some((item) => `${item.service}/${item.environment}` === identity)) throw new Error(`Step ${step.id} declares ${identity} twice.`);
+        next.push({ service: tuple.service, environment: tuple.environment, traffic: tuple.traffic || 'silent' });
+      }
+      const cap = sandbox.limits.maxEvaluatorContainers;
+      if (next.length > cap) throw new Error(`Step ${step.id} declares ${next.length} evaluator containers, exceeding the cap of ${cap}.`);
+      deployments = next;
+    }
+    applied.push({ id: step.id, recommendedDate: step.recommendedDate, cadence: step.cadence, title: step.title || '' });
+    previous = step;
+  }
+  const model = {
+    scenarioId: sandbox.scenarioId,
+    services: [...introduced.values()].map((service) => ({ ...service, references: [...service.references].sort() })).sort((a, b) => a.key.localeCompare(b.key)),
+    deployments: [...deployments].sort((a, b) => `${a.service}/${a.environment}`.localeCompare(`${b.service}/${b.environment}`)),
+    steps: applied
+  };
+  return { ...model, checksum: scenarioChecksum(model) };
+}
+export function scenarioChecksum(model) {
+  return crypto.createHash('sha256').update(JSON.stringify(model)).digest('hex').slice(0, 16);
+}
+export function loadScenario(root = process.cwd(), fileSystem = fs) {
+  const directory = path.join(root, 'scenario');
+  const read = (name) => JSON.parse(fileSystem.readFileSync(path.join(directory, name), 'utf8'));
+  const stepsDirectory = path.join(directory, 'steps');
+  const files = fileSystem.readdirSync(stepsDirectory).filter((name) => name.endsWith('.json')).sort();
+  const steps = files.map((name) => JSON.parse(fileSystem.readFileSync(path.join(stepsDirectory, name), 'utf8')));
+  return { sandbox: read('sandbox.json'), services: read('services.json'), catalog: read('flags.json'), steps, stepFiles: files };
+}
+export const OWNERSHIP_MARKER = '.scenario-owner.json';
+export function catalogSource(serviceKey, flags, scenarioId, template = 'nodejs') {
+  if (template !== 'nodejs') throw new Error(`Source template "${template}" is not implemented yet. Wave 1 is Node.js only; TypeScript, Go, and Python arrive with Waves 2 and 3.`);
+  const files = repositoryFiles(serviceKey, flags);
+  files.push({ path: OWNERSHIP_MARKER, content: `${JSON.stringify({ scenarioId, service: serviceKey, template }, null, 2)}\n` });
+  return { files, date: null };
+}
+export async function repositoryIfPresent(fetcher, token, settings, name, controls) {
+  try { return await gh(fetcher, `/repos/${settings.org}/${name}`, token, undefined, controls); }
+  catch (error) { if (/\(404\)/.test(error.message)) return null; throw error; }
+}
+export async function readOwnershipMarker(fetcher, token, settings, name, controls) {
+  try {
+    const file = await gh(fetcher, `/repos/${settings.org}/${name}/contents/${OWNERSHIP_MARKER}`, token, undefined, controls);
+    if (typeof file?.content !== 'string') return null;
+    return JSON.parse(Buffer.from(file.content, 'base64').toString('utf8'));
+  } catch (error) { if (/\(404\)/.test(error.message)) return null; throw error; }
+}
+export function stepsThrough(steps, targetId) {
+  const index = steps.findIndex((step) => step.id === targetId);
+  if (index < 0) throw new Error(`Unknown scenario step: ${targetId}`);
+  return steps.slice(0, index + 1);
+}
+export async function reconcileStep(fetcher, env, scenario, targetId, controls = {}) {
+  const settings = settingsFor(env); requireConfirmation(controls.confirmation, settings.project); const t = tokensFor('reconcile', env);
+  const requestControls = controls.request || {};
+  const through = stepsThrough(scenario.steps, targetId);
+  const step = through.at(-1);
+  const compiled = compileScenario({ ...scenario, steps: through });
+  const byKey = new Map(scenario.services.services.map((service) => [service.key, service]));
+  const created = []; const adopted = [];
+  const introduce = step.introduceServices || [];
+  const total = introduce.length; let completed = 0;
+  for (const key of introduce) {
+    const service = byKey.get(key);
+    if (!service) throw new Error(`Refusing a repository outside the service catalog: ${key}`);
+    const existing = await repositoryIfPresent(fetcher, t.GH_RESET_TOKEN, settings, key, requestControls);
+    if (existing) {
+      const marker = await readOwnershipMarker(fetcher, t.GH_RESET_TOKEN, settings, key, requestControls);
+      if (!marker || marker.scenarioId !== compiled.scenarioId || marker.service !== key) {
+        throw new Error(`Repository ${settings.org}/${key} already exists without this scenario's ownership marker. That is drift, not a resource to reuse; resolve it before reapplying.`);
+      }
+      adopted.push({ service: key, repositoryId: existing.id ?? null, nodeId: existing.node_id ?? null });
+    } else {
+      const references = (step.sourceReferences || {})[key] || [];
+      const source = catalogSource(key, references, compiled.scenarioId, service.template);
+      const result = await commitInitialSource(fetcher, t.GH_RESET_TOKEN, settings, key, source, requestControls);
+      const version = (step.releaseTags || {})[key];
+      const tag = version ? `${key}-${version}` : null;
+      if (tag) await gh(fetcher, `/repos/${settings.org}/${key}/git/refs`, t.GH_RESET_TOKEN, { method: 'POST', body: JSON.stringify({ ref: `refs/tags/${tag}`, sha: result.commitSha }) }, requestControls);
+      created.push({ service: key, ...result, tag, references, firstPushAt: new Date().toISOString() });
+    }
+    completed += 1;
+    if (controls.onProgress) await controls.onProgress({ completed, total, label: existing ? `Adopted repository ${key}` : `Created repository ${key}` });
+  }
+  return { step: step.id, checksum: compiled.checksum, created, adopted };
+}
+export async function scenarioStatus(fetcher, env, scenario, controls = {}) {
+  const settings = settingsFor(env); const t = tokensFor('scenario', env);
+  const requestControls = controls.request || {};
+  const compiled = compileScenario(scenario);
+  const today = controls.today || new Date().toISOString().slice(0, 10);
+  const repositories = [];
+  for (const service of compiled.services) {
+    const remote = await repositoryIfPresent(fetcher, t.GH_DEMO_TOKEN, settings, service.key, requestControls);
+    repositories.push({ key: service.key, present: Boolean(remote), tag: service.tag, expectedReferences: service.references });
+  }
+  const listed = await ld(fetcher, `/api/v2/flags/${settings.project}?limit=100`, t.LD_DEMO_TOKEN, undefined, requestControls);
+  const present = new Set((Array.isArray(listed.items) ? listed.items : []).map((item) => item.key));
+  const missingFlags = scenario.catalog.flags.map((flag) => flag.key).filter((key) => !present.has(key));
+  const steps = scenario.steps.map((step) => {
+    const elapsed = dayNumber(today) - dayNumber(step.recommendedDate);
+    return { id: step.id, recommendedDate: step.recommendedDate, cadence: step.cadence, overdueDays: elapsed > 0 ? elapsed : 0, dueToday: elapsed === 0, future: elapsed < 0 };
+  });
+  return { checksum: compiled.checksum, today, repositories, missingFlags, steps };
 }
 export async function auditFlag(fetcher, token, settings, key) {
   const search = await gh(fetcher, `/search/code?q=${encodeURIComponent(`${key} org:${settings.org}`)}&per_page=100`, token);

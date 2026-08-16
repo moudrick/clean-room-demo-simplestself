@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "scenarioId": "campaign-2026-08-16",
   "campaignStart": "2026-08-16T10:09:38.558Z",
-  "capturedAt": "2026-08-16T10:17:44.719Z",
+  "capturedAt": "2026-08-16T12:36:03.284Z",
   "organization": "featureflag-extensiveconsumer-demo-org",
   "project": {
     "key": "featureflag-extensiveconsumer-demo-key",
@@ -229,6 +229,16 @@
   ],
   "repositories": [
     {
+      "name": "demo-catalog",
+      "id": 1335913635,
+      "nodeId": "R_kgDOT6Bsow",
+      "createdAt": "2026-08-16T12:32:36Z",
+      "defaultBranch": "main",
+      "visibility": "public",
+      "headShaAtBaseline": "32e322359750e759936f199f06f376f810e590c6",
+      "headCommittedAt": "2026-08-16T12:32:42Z"
+    },
+    {
       "name": "demo-orders",
       "id": 1335441054,
       "nodeId": "R_kgDOT5k2ng",
@@ -239,14 +249,14 @@
       "headCommittedAt": "2026-08-15T21:46:30Z"
     },
     {
-      "name": "demo-storefront",
-      "id": 1335441147,
-      "nodeId": "R_kgDOT5k2-w",
-      "createdAt": "2026-08-15T21:46:32Z",
+      "name": "demo-pricing",
+      "id": 1335913727,
+      "nodeId": "R_kgDOT6Bs_w",
+      "createdAt": "2026-08-16T12:32:44Z",
       "defaultBranch": "main",
       "visibility": "public",
-      "headShaAtBaseline": "a5a5f750b23cbd7ab8a13aa6a6d7e4e2d98999d5",
-      "headCommittedAt": "2026-08-15T21:46:37Z"
+      "headShaAtBaseline": "6562a0bfd38d5ce6fb1b57595926105d150a4573",
+      "headCommittedAt": "2026-08-16T12:32:51Z"
     },
     {
       "name": "demo-profile",
@@ -257,6 +267,36 @@
       "visibility": "public",
       "headShaAtBaseline": "7175f785b1ad20147783d007ed5bba0074436a19",
       "headCommittedAt": "2020-01-02T03:04:05Z"
+    },
+    {
+      "name": "demo-search",
+      "id": 1335913900,
+      "nodeId": "R_kgDOT6BtrA",
+      "createdAt": "2026-08-16T12:33:02Z",
+      "defaultBranch": "main",
+      "visibility": "public",
+      "headShaAtBaseline": "53fe6c432daa84241da1c2fae5b130257b939c54",
+      "headCommittedAt": "2026-08-16T12:33:08Z"
+    },
+    {
+      "name": "demo-shipping",
+      "id": 1335913808,
+      "nodeId": "R_kgDOT6BtUA",
+      "createdAt": "2026-08-16T12:32:53Z",
+      "defaultBranch": "main",
+      "visibility": "public",
+      "headShaAtBaseline": "821210d70c979d15eb5021f115cf81035a7bdfe6",
+      "headCommittedAt": "2026-08-16T12:32:59Z"
+    },
+    {
+      "name": "demo-storefront",
+      "id": 1335441147,
+      "nodeId": "R_kgDOT5k2-w",
+      "createdAt": "2026-08-15T21:46:32Z",
+      "defaultBranch": "main",
+      "visibility": "public",
+      "headShaAtBaseline": "a5a5f750b23cbd7ab8a13aa6a6d7e4e2d98999d5",
+      "headCommittedAt": "2026-08-15T21:46:37Z"
     }
   ]
 }

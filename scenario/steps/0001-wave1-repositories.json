@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "s001",
+  "title": "Wave 1 repositories: reach seven services and start GitHub indexing",
+  "recommendedDate": "2026-08-18",
+  "cadence": "three-day",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "introduceServices": ["demo-catalog", "demo-pricing", "demo-shipping", "demo-search"],
+  "sourceReferences": {
+    "demo-catalog": ["demo-checkout-rollout", "demo-pricing-engine-v2", "demo-shipping-estimates", "demo-catalog-enrichment"],
+    "demo-pricing": ["demo-pricing-engine-v2", "demo-tax-calculation-v2"],
+    "demo-shipping": ["demo-shipping-estimates", "demo-checkout-address-validation", "demo-express-returns"],
+    "demo-search": ["demo-search-ranking-v3", "demo-catalog-enrichment"]
+  },
+  "releaseTags": {
+    "demo-catalog": "v001",
+    "demo-pricing": "v001",
+    "demo-shipping": "v001",
+    "demo-search": "v001"
+  },
+  "deploy": [
+    { "service": "demo-orders", "environment": "production", "traffic": "paced-probe" },
+    { "service": "demo-orders", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-orders", "environment": "test", "traffic": "periodic" },
+    { "service": "demo-orders", "environment": "dev", "traffic": "rare" },
+    { "service": "demo-storefront", "environment": "production", "traffic": "business-hours-production" },
+    { "service": "demo-storefront", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-profile", "environment": "production", "traffic": "business-hours-production" },
+    { "service": "demo-profile", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-catalog", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-catalog", "environment": "dev", "traffic": "rare" },
+    { "service": "demo-search", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-search", "environment": "dev", "traffic": "rare" }
+  ],
+  "targeting": [],
+  "notes": [
+    "Every flag stays off. This step introduces code references and starts the GitHub indexing clock; it changes no targeting.",
+    "demo-pricing and demo-shipping are created and committed but deliberately not deployed: their flags exist with source references and no callers, which is the first stage of the lifecycle the talk describes.",
+    "Deployment rotates rather than grows. The cap is twelve simultaneous evaluator containers and the stack is already at twelve, so demo-storefront and demo-profile drop their non-critical Test and Dev evaluators to make room. Production and Staging stay up for all three pre-campaign services, so no critical-environment evidence is interrupted.",
+    "demo-orders keeps all four environments because it carries the bounded Production load probe and its history must remain continuous."
+  ]
+}
