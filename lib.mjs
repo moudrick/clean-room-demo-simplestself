@@ -41,6 +41,7 @@ export function requireConfirmation(value, project) {
 export function tokensFor(command, env) {
   const namesByCommand = {
     audit: ['GH_DEMO_TOKEN', 'LD_DEMO_TOKEN'],
+    baseline: ['GH_DEMO_TOKEN', 'LD_DEMO_TOKEN'],
     doctor: ['GH_DEMO_TOKEN', 'GH_RESET_TOKEN', 'LD_DEMO_TOKEN', 'LD_RESET_TOKEN'],
     recreate: ['GH_RESET_TOKEN', 'LD_RESET_TOKEN'],
     refresh: ['GH_RESET_TOKEN', 'LD_RESET_TOKEN'],
@@ -57,6 +58,21 @@ export function detailedEventsFor(env) {
   if (value === undefined || value === '' || value === 'false') return false;
   if (value === 'true') return true;
   throw new Error('LD_PROBE_DETAILED_EVENTS must be true or false.');
+}
+export const CAMPAIGN_LOCK_ENV = 'CAMPAIGN_LOCK';
+export function campaignLocked(env) {
+  const value = env[CAMPAIGN_LOCK_ENV];
+  if (value === undefined || value === '' || value === 'false') return false;
+  if (value === 'true') return true;
+  throw new Error('CAMPAIGN_LOCK must be true or false.');
+}
+export function breakGlassPhrase(project) { return `BREAK CAMPAIGN LOCK ${project}`; }
+export function assertCampaignUnlocked(command, env, override) {
+  if (!campaignLocked(env)) return;
+  const project = env[PROJECT_ENV];
+  const configured = /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(project || '');
+  if (configured && override !== undefined && override === breakGlassPhrase(project)) return;
+  throw new Error(`Campaign lock is active: ${command} is refused. The campaign sandbox holds irreplaceable evidence; its repositories and flags are archived, never deleted. Emergency recovery only: see the emergency-recovery section of SPEC.md.`);
 }
 export function generationIdFor(projectId, at = new Date()) {
   if (typeof projectId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(projectId) || !(at instanceof Date) || Number.isNaN(at.valueOf())) throw new Error('Invalid generation input.');
@@ -534,6 +550,7 @@ export async function configureFlagTargeting(fetcher, token, settings, environme
   }, controls);
 }
 export async function recreate(fetcher, env, confirmation, controls = {}) {
+  (controls.assertCampaignUnlocked || assertCampaignUnlocked)('recreate', env, controls.breakCampaignLock);
   const settings = settingsFor(env); requireConfirmation(confirmation, settings.project); const t = tokensFor('recreate', env); const detailedEvents = detailedEventsFor(env); assertScope({ ...settings });
   await (controls.assertRuntimeStopped || assertRuntimeStopped)(controls.runtimeRoot, controls.runtimeCheck);
   const total = 15; let completed = 0;
@@ -583,6 +600,7 @@ export async function recreate(fetcher, env, confirmation, controls = {}) {
   return { deleted, previousProjectId: previousProject?._id || null, projectId: createdProject.projectId, generation };
 }
 export async function refresh(fetcher, env, confirmation, controls = {}) {
+  (controls.assertCampaignUnlocked || assertCampaignUnlocked)('refresh', env, controls.breakCampaignLock);
   const settings = settingsFor(env); requireConfirmation(confirmation, settings.project); const t = tokensFor('refresh', env); const detailedEvents = detailedEventsFor(env); assertScope({ ...settings });
   await (controls.assertRuntimeStopped || assertRuntimeStopped)(controls.runtimeRoot, controls.runtimeCheck);
   const total = 13; let completed = 0;
@@ -621,6 +639,7 @@ export async function refresh(fetcher, env, confirmation, controls = {}) {
   return { deleted, projectId: state.projectId, generation };
 }
 export async function destroy(fetcher, env, confirmation, controls = {}) {
+  (controls.assertCampaignUnlocked || assertCampaignUnlocked)('destroy', env, controls.breakCampaignLock);
   const settings = settingsFor(env); requireConfirmation(confirmation, settings.project); const t = tokensFor('destroy', env); assertScope({ ...settings }); const result = [];
   await (controls.assertRuntimeStopped || assertRuntimeStopped)(controls.runtimeRoot, controls.runtimeCheck);
   const requestControls = controls.request || {};
@@ -628,6 +647,50 @@ export async function destroy(fetcher, env, confirmation, controls = {}) {
   result.push([settings.project, await removeIfPresent(fetcher, LD, `/api/v2/projects/${settings.project}`, t.LD_RESET_TOKEN, `LD_RESET_TOKEN delete project ${settings.project}`, requestControls)]);
   (controls.cleanRuntime || cleanRuntime)(controls.runtimeRoot);
   return result;
+}
+export const DAY_MS = 86_400_000;
+export const DEFAULT_MINIMUM_AGE_DAYS = 30;
+export function flagAgeEvidence(creationDate, at, minimumAgeDays = DEFAULT_MINIMUM_AGE_DAYS) {
+  const created = Number(creationDate);
+  if (!Number.isFinite(created) || created <= 0) return { createdAt: null, ageDaysAtCapture: null, minimumAgeReachedAt: null };
+  return {
+    createdAt: new Date(created).toISOString(),
+    ageDaysAtCapture: Math.floor((at.getTime() - created) / DAY_MS),
+    minimumAgeReachedAt: new Date(created + minimumAgeDays * DAY_MS).toISOString()
+  };
+}
+export function mergeCampaign(previous, observed) {
+  const campaignStart = previous?.campaignStart || observed.capturedAt;
+  const scenarioId = previous?.scenarioId || `campaign-${campaignStart.slice(0, 10)}`;
+  return { schemaVersion: 1, scenarioId, campaignStart, ...observed };
+}
+export async function baseline(fetcher, env, controls = {}) {
+  const settings = settingsFor(env); assertScope({ ...settings }); const t = tokensFor('baseline', env);
+  const requestControls = controls.request || {};
+  const at = controls.now ? new Date(controls.now) : new Date();
+  const project = await ld(fetcher, `/api/v2/projects/${settings.project}`, t.LD_DEMO_TOKEN, undefined, requestControls);
+  if (project.key !== settings.project || typeof project._id !== 'string' || !project._id) throw new Error('LaunchDarkly project identity mismatch.');
+  const flagResult = await ld(fetcher, `/api/v2/flags/${settings.project}?limit=100`, t.LD_DEMO_TOKEN, undefined, requestControls);
+  const flags = (Array.isArray(flagResult.items) ? flagResult.items : []).map((item) => ({
+    key: item.key, name: item.name ?? null, kind: item.kind ?? null, temporary: item.temporary ?? null,
+    ...flagAgeEvidence(item.creationDate, at)
+  })).sort((a, b) => a.key.localeCompare(b.key));
+  const repositories = [];
+  for (const name of REPOS) {
+    const repo = await gh(fetcher, `/repos/${settings.org}/${name}`, t.GH_DEMO_TOKEN, undefined, requestControls);
+    const commits = await gh(fetcher, `/repos/${settings.org}/${name}/commits?per_page=1`, t.GH_DEMO_TOKEN, undefined, requestControls);
+    const head = Array.isArray(commits) ? commits[0] : null;
+    repositories.push({
+      name, id: repo.id ?? null, nodeId: repo.node_id ?? null, createdAt: repo.created_at ?? null,
+      defaultBranch: repo.default_branch ?? null, visibility: repo.visibility ?? (repo.private ? 'private' : 'public'),
+      headShaAtBaseline: head?.sha ?? null, headCommittedAt: head?.commit?.committer?.date ?? null
+    });
+  }
+  return {
+    capturedAt: at.toISOString(), organization: settings.org,
+    project: { key: project.key, id: project._id, name: project.name ?? null },
+    flags, repositories
+  };
 }
 export async function auditFlag(fetcher, token, settings, key) {
   const search = await gh(fetcher, `/search/code?q=${encodeURIComponent(`${key} org:${settings.org}`)}&per_page=100`, token);

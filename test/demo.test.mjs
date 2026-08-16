@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped } from '../lib.mjs';
+import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence } from '../lib.mjs';
 
 const env = { GH_ORG: 'example-demo-org', LD_PROJECT_KEY: 'example-demo-project', GH_RESET_TOKEN: 'gh-reset-secret', GH_DEMO_TOKEN: 'gh-demo-secret', LD_RESET_TOKEN: 'ld-reset-secret', LD_DEMO_TOKEN: 'ld-demo-secret' };
 test('fixed scope rejects another organization, project, repository, flag, or environment set', () => {
@@ -293,7 +293,9 @@ test('GitHub Actions checks direct pushes to main without lifecycle commands', (
 });
 test('CLI exposes audit and removes the pre-release run command', () => {
   const cli = fs.readFileSync(new URL('../demo.mjs', import.meta.url), 'utf8');
-  assert.equal(typeof audit, 'function'); assert.equal(typeof refresh, 'function'); assert.match(cli, /command === 'audit'/); assert.match(cli, /<doctor\|recreate\|refresh\|audit\|destroy>/); assert.equal(cli.includes("command === 'run'"), false);
+  assert.equal(typeof audit, 'function'); assert.equal(typeof refresh, 'function'); assert.equal(typeof baseline, 'function');
+  assert.match(cli, /command === 'audit'/); assert.match(cli, /command === 'baseline'/);
+  assert.match(cli, /<doctor\|baseline\|recreate\|refresh\|audit\|destroy>/); assert.equal(cli.includes("command === 'run'"), false);
 });
 test('project creation requests precisely the four demo environments', async () => {
   const calls = []; const fetcher = async (url, options) => { calls.push({ url: String(url), options }); const body = calls.length === 1 ? { key: env.LD_PROJECT_KEY, _id: 'generation-1' } : { items: ENVIRONMENTS }; return { ok: true, status: 200, url: String(url), json: async () => body }; };
@@ -429,4 +431,82 @@ test('destroy removes the owned project rather than individually deleting flags'
   assert.equal(calls.filter((call) => call.path === '/api/v2/projects/example-demo-project' && call.method === 'DELETE').length, 1);
   assert.equal(calls.some((call) => call.path.startsWith('/api/v2/flags/')), false);
   assert.equal(cleaned, 1);
+});
+const lockedEnv = { ...env, CAMPAIGN_LOCK: 'true' };
+test('CAMPAIGN_LOCK parses exactly true or false', () => {
+  assert.equal(CAMPAIGN_LOCK_ENV, 'CAMPAIGN_LOCK');
+  assert.equal(campaignLocked({}), false); assert.equal(campaignLocked({ CAMPAIGN_LOCK: '' }), false); assert.equal(campaignLocked({ CAMPAIGN_LOCK: 'false' }), false);
+  assert.equal(campaignLocked({ CAMPAIGN_LOCK: 'true' }), true);
+  assert.throws(() => campaignLocked({ CAMPAIGN_LOCK: 'TRUE' }), /must be true or false/);
+  assert.throws(() => campaignLocked({ CAMPAIGN_LOCK: '1' }), /must be true or false/);
+});
+test('campaign lock refuses recreate, refresh, and destroy before any preflight or request', async () => {
+  let fetched = 0; const fetcher = async (url) => { fetched += 1; return { ok: true, status: 200, url: String(url), json: async () => ({}) }; };
+  let runtimeChecked = 0; const controls = { assertRuntimeStopped: async () => { runtimeChecked += 1; } };
+  for (const [name, action] of [['recreate', recreate], ['refresh', refresh], ['destroy', destroy]]) {
+    await assert.rejects(() => action(fetcher, lockedEnv, lockedEnv.LD_PROJECT_KEY, controls), /Campaign lock is active/, name);
+  }
+  assert.equal(fetched, 0); assert.equal(runtimeChecked, 0);
+});
+test('campaign lock refuses before confirmation and token boundaries are evaluated', async () => {
+  const bare = { GH_ORG: env.GH_ORG, LD_PROJECT_KEY: env.LD_PROJECT_KEY, CAMPAIGN_LOCK: 'true' };
+  for (const action of [recreate, refresh, destroy]) {
+    await assert.rejects(() => action(async () => ({}), bare, 'wrong-confirmation'), /Campaign lock is active/);
+  }
+});
+test('breaking the campaign lock requires the exact typed override phrase', () => {
+  const phrase = breakGlassPhrase(env.LD_PROJECT_KEY);
+  assert.equal(phrase, 'BREAK CAMPAIGN LOCK example-demo-project');
+  for (const wrong of [undefined, '', 'true', 'BREAK CAMPAIGN LOCK', 'break campaign lock example-demo-project', 'BREAK CAMPAIGN LOCK other-project']) {
+    assert.throws(() => assertCampaignUnlocked('destroy', lockedEnv, wrong), /Campaign lock is active/, String(wrong));
+  }
+  assert.doesNotThrow(() => assertCampaignUnlocked('destroy', lockedEnv, phrase));
+  assert.doesNotThrow(() => assertCampaignUnlocked('destroy', env, undefined));
+  assert.throws(() => assertCampaignUnlocked('destroy', { CAMPAIGN_LOCK: 'true' }, 'BREAK CAMPAIGN LOCK undefined'), /Campaign lock is active/);
+});
+test('campaign lock refusal names the command and never prints the override phrase', () => {
+  assert.throws(() => assertCampaignUnlocked('refresh', lockedEnv), (error) => {
+    assert.match(error.message, /refresh is refused/); assert.match(error.message, /SPEC\.md/);
+    assert.ok(!error.message.includes('BREAK CAMPAIGN LOCK')); return true;
+  });
+});
+test('flag age evidence converts creation dates into real age and the minimum-age gate', () => {
+  const at = new Date('2026-08-16T12:00:00.000Z');
+  const evidence = flagAgeEvidence(Date.parse('2026-08-14T09:00:00.000Z'), at);
+  assert.equal(evidence.createdAt, '2026-08-14T09:00:00.000Z');
+  assert.equal(evidence.ageDaysAtCapture, 2);
+  assert.equal(evidence.minimumAgeReachedAt, '2026-09-13T09:00:00.000Z');
+  assert.deepEqual(flagAgeEvidence(undefined, at), { createdAt: null, ageDaysAtCapture: null, minimumAgeReachedAt: null });
+});
+test('campaign merge preserves the original start and scenario identity across reruns', () => {
+  const first = mergeCampaign(null, { capturedAt: '2026-08-16T12:00:00.000Z', flags: [], repositories: [] });
+  assert.equal(first.campaignStart, '2026-08-16T12:00:00.000Z'); assert.equal(first.scenarioId, 'campaign-2026-08-16');
+  const second = mergeCampaign(first, { capturedAt: '2026-09-01T00:00:00.000Z', flags: [], repositories: [] });
+  assert.equal(second.campaignStart, first.campaignStart); assert.equal(second.scenarioId, first.scenarioId);
+  assert.equal(second.capturedAt, '2026-09-01T00:00:00.000Z');
+});
+test('baseline reads identity and age with demo tokens only and never mutates', async () => {
+  const calls = [];
+  const fetcher = async (url, options = {}) => {
+    const parsed = new URL(url); calls.push({ path: parsed.pathname, method: options.method || 'GET', auth: options.headers?.Authorization });
+    const reply = (body) => ({ ok: true, status: 200, url: String(url), headers: {}, json: async () => body });
+    if (parsed.pathname === '/api/v2/projects/example-demo-project') return reply({ key: 'example-demo-project', _id: 'proj123', name: 'Demo' });
+    if (parsed.pathname === '/api/v2/flags/example-demo-project') return reply({ items: [
+      { key: 'demo-retired-banner', kind: 'boolean', temporary: true, creationDate: Date.parse('2026-08-14T09:00:00.000Z') },
+      { key: 'demo-checkout-rollout', kind: 'boolean', temporary: true, creationDate: Date.parse('2026-08-13T09:00:00.000Z') }] });
+    if (parsed.pathname.endsWith('/commits')) return reply([{ sha: 'abc123', commit: { committer: { date: '2026-08-15T10:00:00.000Z' } } }]);
+    return reply({ id: 42, node_id: 'R_42', created_at: '2026-08-13T08:00:00.000Z', default_branch: 'main', private: false });
+  };
+  const result = await baseline(fetcher, env, { now: '2026-08-16T12:00:00.000Z' });
+  assert.equal(result.project.id, 'proj123'); assert.equal(result.organization, 'example-demo-org');
+  assert.deepEqual(result.flags.map((flag) => flag.key), ['demo-checkout-rollout', 'demo-retired-banner']);
+  assert.equal(result.flags[0].ageDaysAtCapture, 3); assert.equal(result.flags[0].minimumAgeReachedAt, '2026-09-12T09:00:00.000Z');
+  assert.equal(result.repositories.length, REPOS.length); assert.equal(result.repositories[0].headShaAtBaseline, 'abc123');
+  assert.equal(calls.every((call) => call.method === 'GET'), true);
+  assert.equal(calls.some((call) => call.auth === 'ld-reset-secret' || call.auth === 'Bearer gh-reset-secret'), false);
+});
+test('campaign lock leaves read-only audit unaffected', async () => {
+  const fetcher = async (url) => ({ ok: true, status: 200, url: String(url), headers: {}, json: async () => ({ items: [], total_count: 0 }) });
+  let message = ''; try { await audit(fetcher, lockedEnv); } catch (error) { message = error.message; }
+  assert.ok(!/Campaign lock/.test(message), message);
 });

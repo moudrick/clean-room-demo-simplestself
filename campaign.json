@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "campaign-2026-08-16",
+  "campaignStart": "2026-08-16T10:09:38.558Z",
+  "capturedAt": "2026-08-16T10:09:38.558Z",
+  "organization": "featureflag-extensiveconsumer-demo-org",
+  "project": {
+    "key": "featureflag-extensiveconsumer-demo-key",
+    "id": "6a80dd8bcc3c650a840adfe7",
+    "name": "Synthetic feature-flag clean-room demo"
+  },
+  "flags": [
+    {
+      "key": "demo-checkout-rollout",
+      "name": "demo-checkout-rollout",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-15T21:43:40.964Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-14T21:43:40.964Z"
+    },
+    {
+      "key": "demo-legacy-profile",
+      "name": "demo-legacy-profile",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-15T21:43:43.350Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-14T21:43:43.350Z"
+    },
+    {
+      "key": "demo-retired-banner",
+      "name": "demo-retired-banner",
+      "kind": "boolean",
+      "temporary": true,
+      "createdAt": "2026-08-15T21:43:52.708Z",
+      "ageDaysAtCapture": 0,
+      "minimumAgeReachedAt": "2026-09-14T21:43:52.708Z"
+    }
+  ],
+  "repositories": [
+    {
+      "name": "demo-orders",
+      "id": 1335441054,
+      "nodeId": "R_kgDOT5k2ng",
+      "createdAt": "2026-08-15T21:46:25Z",
+      "defaultBranch": "main",
+      "visibility": "public",
+      "headShaAtBaseline": "1523f59f25297c8d5692a36ce49bc0093bdde820",
+      "headCommittedAt": "2026-08-15T21:46:30Z"
+    },
+    {
+      "name": "demo-storefront",
+      "id": 1335441147,
+      "nodeId": "R_kgDOT5k2-w",
+      "createdAt": "2026-08-15T21:46:32Z",
+      "defaultBranch": "main",
+      "visibility": "public",
+      "headShaAtBaseline": "a5a5f750b23cbd7ab8a13aa6a6d7e4e2d98999d5",
+      "headCommittedAt": "2026-08-15T21:46:37Z"
+    },
+    {
+      "name": "demo-profile",
+      "id": 1335441219,
+      "nodeId": "R_kgDOT5k3Qw",
+      "createdAt": "2026-08-15T21:46:39Z",
+      "defaultBranch": "main",
+      "visibility": "public",
+      "headShaAtBaseline": "7175f785b1ad20147783d007ed5bba0074436a19",
+      "headCommittedAt": "2020-01-02T03:04:05Z"
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { doctor, recreate, refresh, destroy, audit, settingsFor, REPOS, FLAGS, ENVIRONMENTS, progressLine, redact } from './lib.mjs';
+import { doctor, recreate, refresh, destroy, audit, baseline, mergeCampaign, settingsFor, REPOS, FLAGS, ENVIRONMENTS, progressLine, redact } from './lib.mjs';
 
 function loadEnv() {
   const file = '.env';
@@ -10,6 +10,8 @@ function loadEnv() {
 }
 const command = process.argv[2];
 const confirmation = process.argv[3] === '--confirm' ? process.argv[4] : undefined;
+const breakIndex = process.argv.indexOf('--break-campaign-lock');
+const breakCampaignLock = breakIndex > 2 ? process.argv[breakIndex + 1] : undefined;
 const env = loadEnv();
 const secrets = ['GH_RESET_TOKEN', 'GH_DEMO_TOKEN', 'LD_RESET_TOKEN', 'LD_DEMO_TOKEN'].map((name) => env[name]).filter(Boolean);
 try {
@@ -26,14 +28,24 @@ try {
       const wait = remainingMs > 0 ? `${Math.ceil(remainingMs / 1000)}s remaining` : 'retrying now';
       console.log(progressLine({ ...progress, label: `${progress.label}; ${provider} rate limit ${status}, retry ${retry}/${maxRetries}, ${wait}` }));
     };
-    printTargets(); const action = command === 'recreate' ? recreate : refresh; const result = await action(fetch, env, confirmation, { onProgress, onRateLimit });
+    printTargets(); const action = command === 'recreate' ? recreate : refresh; const result = await action(fetch, env, confirmation, { onProgress, onRateLimit, breakCampaignLock });
     for (const [name, state] of result.deleted) console.log(`${name}: ${state}`);
     if (command === 'recreate') console.log(`Created synthetic resources and runtime. LaunchDarkly project instance: ${result.projectId}${result.previousProjectId ? ` (replaced ${result.previousProjectId})` : ' (fresh)'}; traffic generation: ${result.generation}. The old profile commit timestamp is deliberately synthetic.`);
     else console.log(`Refreshed repositories, flag configuration, and runtime while preserving LaunchDarkly project instance ${result.projectId}; new traffic generation: ${result.generation}.`);
   } else if (command === 'destroy') {
-    printTargets(); for (const [name, state] of await destroy(fetch, env, confirmation)) console.log(`${name}: ${state}`);
+    printTargets(); for (const [name, state] of await destroy(fetch, env, confirmation, { breakCampaignLock })) console.log(`${name}: ${state}`);
   } else if (command === 'audit') {
     console.log('FLAG | VERIFIED FILES | REPOSITORIES | LAST FILE COMMIT | RESULT');
     for (const row of await audit(fetch, env)) { const latest = row.files.map((f) => f.commit).sort().at(-1) || '-'; console.log(`${row.key} | ${row.files.map((f) => f.path).join(',') || '-'} | ${[...new Set(row.files.map((f) => f.repo))].join(',') || '-'} | ${latest} | ${row.result}`); }
-  } else throw new Error('Usage: node demo.mjs <doctor|recreate|refresh|audit|destroy> [--confirm $LD_PROJECT_KEY]');
+  } else if (command === 'baseline') {
+    const file = 'campaign.json';
+    const previous = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+    const merged = mergeCampaign(previous, await baseline(fetch, env));
+    fs.writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`);
+    console.log(`Wrote ${file}: scenario ${merged.scenarioId}, campaign start ${merged.campaignStart}, project ${merged.project.key} (${merged.project.id}).`);
+    console.log('FLAG | CREATED (UTC) | AGE DAYS | 30-DAY AGE REACHED');
+    for (const flag of merged.flags) console.log(`${flag.key} | ${flag.createdAt} | ${flag.ageDaysAtCapture} | ${flag.minimumAgeReachedAt}`);
+    console.log('REPOSITORY | CREATED (UTC) | DEFAULT BRANCH | HEAD SHA AT BASELINE');
+    for (const repo of merged.repositories) console.log(`${repo.name} | ${repo.createdAt} | ${repo.defaultBranch} | ${repo.headShaAtBaseline}`);
+  } else throw new Error('Usage: node demo.mjs <doctor|baseline|recreate|refresh|audit|destroy> [--confirm $LD_PROJECT_KEY]');
 } catch (error) { console.error(`Error: ${redact(error, secrets)}`); process.exitCode = 1; }

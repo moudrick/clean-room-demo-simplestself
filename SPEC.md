@@ -8,7 +8,7 @@ The only disposable GitHub repositories are `demo-orders`, `demo-storefront`, an
 
 ## Credentials and requests
 
-The management CLI reads exactly four secrets: `GH_RESET_TOKEN`, `GH_DEMO_TOKEN`, `LD_RESET_TOKEN`, and `LD_DEMO_TOKEN`. Each evaluator reads exactly one additional secret, `LD_EVALUATION_SDK_KEY`, for its environment. `GH_ORG` and `LD_PROJECT_KEY` are required non-secret configuration. `LD_PROBE_DETAILED_EVENTS` is an optional non-secret boolean and defaults to `false`. Secrets are never arguments, URLs, Git remotes, fixtures, output, logs, or error text.
+The management CLI reads exactly four secrets: `GH_RESET_TOKEN`, `GH_DEMO_TOKEN`, `LD_RESET_TOKEN`, and `LD_DEMO_TOKEN`. Each evaluator reads exactly one additional secret, `LD_EVALUATION_SDK_KEY`, for its environment. `GH_ORG` and `LD_PROJECT_KEY` are required non-secret configuration. `LD_PROBE_DETAILED_EVENTS` and `CAMPAIGN_LOCK` are optional non-secret booleans and default to `false`. Secrets are never arguments, URLs, Git remotes, fixtures, output, logs, or error text.
 
 GitHub requests use `Authorization: Bearer <token>`; LaunchDarkly REST requests use `Authorization: <token>`; every JSON body declares `Content-Type: application/json`. `doctor` needs all four management secrets, `audit` needs only demo tokens, and `recreate`, `refresh`, and `destroy` need only reset tokens. Reset tokens never substitute for missing demo tokens. Evaluators never read management tokens. `CREDENTIALS.md` owns the one-time credential instructions.
 
@@ -27,6 +27,24 @@ README command snippets target Bash from the repository root and must be directl
 ## Commands and lifecycle
 
 `node demo.mjs doctor` is read-only. It checks credential presence, authentication, configured-organization access, existing disposable-repository access, project-list access, and official response origins. It succeeds whether the demo project exists or not. Mutation capability is verified only by the mutating commands.
+
+### Campaign lock
+
+`CAMPAIGN_LOCK` is a non-secret boolean in `.env` and defaults to `false`. It must be exactly `true` or `false`; any other value is an error.
+
+While `CAMPAIGN_LOCK=true`, `recreate`, `refresh`, and `destroy` refuse before any credential, confirmation, scope, or runtime preflight and before any API request. The lock exists because the campaign sandbox accumulates irreplaceable evidence: repository history, flag identity, flag age, evaluations, contexts, and search indexing. Resources created while the lock is active are archived, never deleted. `refresh` is locked with the other two because it deletes and recreates the owned repositories, which destroys repository history and restarts GitHub indexing even though it preserves the LaunchDarkly project.
+
+`doctor` and `audit` are read-only and are never affected by the lock. The refusal names the refused command and points to the emergency-recovery section below; it never prints the override phrase.
+
+### Emergency recovery only
+
+Breaking the lock is an emergency recovery action, not an operating procedure, and is deliberately absent from the README timeline. In addition to `--confirm "$LD_PROJECT_KEY"`, the operator types the override on the command line for every single invocation:
+
+```console
+--break-campaign-lock "BREAK CAMPAIGN LOCK <the configured LD_PROJECT_KEY value>"
+```
+
+The argument must equal that phrase exactly, with the configured project key substituted. It is typed literally at the console each time and is never stored in `.env`, a shell alias, a variable, or a script. Breaking the lock does not make deletion safe; it only restores the pre-campaign behavior of the three destructive commands.
 
 `node demo.mjs recreate --confirm "$LD_PROJECT_KEY"` is the destructive hard reset. It verifies reset access, exact confirmation, exact targets, and that the tracked local Compose stack is stopped. It deletes only the three owned repositories and exact demo project, confirms absence with at most ten one-second read checks, then creates the repositories, project, four environments, three flags, and targeting. It makes initial and timestamp-controlled synthetic commits. Finally it shallow-clones the public repositories over token-free HTTPS and transactionally replaces only generated `runtime/repos/` and `runtime/sdk-keys.env`; a local preparation failure cleans both artifacts.
 
