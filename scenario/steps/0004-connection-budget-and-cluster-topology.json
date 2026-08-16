@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "id": "s004",
+  "title": "Short-lived SDK connections and the full five-cluster Production topology",
+  "recommendedDate": "2026-08-18",
+  "cadence": "three-day",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "updateServices": ["demo-orders", "demo-storefront", "demo-profile", "demo-catalog", "demo-pricing", "demo-shipping", "demo-search"],
+  "releaseTags": {
+    "demo-orders": "v001",
+    "demo-storefront": "v001",
+    "demo-profile": "v001",
+    "demo-catalog": "v004",
+    "demo-pricing": "v004",
+    "demo-shipping": "v004",
+    "demo-search": "v004"
+  },
+  "deploy": [
+    { "service": "demo-orders", "environment": "production", "traffic": "paced-probe" },
+    { "service": "demo-orders", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-orders", "environment": "test", "traffic": "periodic" },
+    { "service": "demo-orders", "environment": "dev", "traffic": "rare" },
+    { "service": "demo-storefront", "environment": "production", "traffic": "business-hours-production" },
+    { "service": "demo-storefront", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-profile", "environment": "production", "traffic": "business-hours-production" },
+    { "service": "demo-profile", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-pricing", "environment": "production", "traffic": "business-hours-production" },
+    { "service": "demo-pricing", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-catalog", "environment": "staging", "traffic": "business-hours-staging" },
+    { "service": "demo-search", "environment": "staging", "traffic": "business-hours-staging" }
+  ],
+  "targeting": [],
+  "notes": [
+    "LaunchDarkly meters average concurrent server-side SDK connections and the plan ceiling is five, not the twelve containers the sandbox was sized for. Twelve long-lived clients would have exceeded the ceiling before August ended. Ordinary evaluators now connect only for the duration of each batch; the bounded Production rate probe keeps one sustained connection because its evaluations-per-hour figure only means anything if pacing stays continuous.",
+    "Cluster topology now comes from sandbox.json instead of a hardcoded three-cluster Production list, so all five Production clusters finally emit contexts. Clusters carry population weights and a rollout order, least-populated first, which makes a cluster-by-cluster rollout an accelerating curve: 5, 15, 30, 60, 100 per cent of Production traffic serving true.",
+    "The three pre-campaign repositories receive their first release tag here. They were created before the scenario existed and had none, which is why they alone jump to v001 while the Wave 1 additions advance to v004.",
+    "demo-pricing joins the Production deployment set so demo-tax-calculation-v2 has critical-environment evaluations to accumulate and later stop. demo-storefront and demo-profile keep Production and Staging only; Test and Dev gate nothing.",
+    "First step delivered entirely through squash-merged pull requests rather than direct commits to main."
+  ]
+}

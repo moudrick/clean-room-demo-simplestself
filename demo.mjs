@@ -91,7 +91,8 @@ try {
       console.log('No mutation performed. Targeting is unchanged and every flag stays off.');
     } else if (sub === 'apply') {
       if (!target) throw new Error('scenario apply requires --to <step>.');
-      const result = await reconcileStep(fetch, env, scenario, target, { confirmation, onProgress: (state) => console.log(progressLine(state)) });
+      const campaign = fs.existsSync('campaign.json') ? JSON.parse(fs.readFileSync('campaign.json', 'utf8')) : null;
+      const result = await reconcileStep(fetch, env, scenario, target, { confirmation, campaign, onProgress: (state) => console.log(progressLine(state)) });
       console.log(`Applied ${result.step} | checksum ${result.checksum}`);
       console.log(`Created ${result.created.length} repository(ies); adopted ${result.adopted.length}. Nothing was deleted or recreated.`);
       for (const item of result.created) console.log(`  ${item.service} | commit ${item.commitSha} | tag ${item.tag} | references ${item.references.join(', ')}`);

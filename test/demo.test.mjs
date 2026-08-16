@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE, loadScenario, compileScenario, assertSandbox, assertServices, reconcileStep, catalogSource, OWNERSHIP_MARKER } from '../lib.mjs';
+import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE, loadScenario, compileScenario, assertSandbox, assertServices, reconcileStep, catalogSource, OWNERSHIP_MARKER, clusterTopologyFor } from '../lib.mjs';
 const catalogFile = JSON.parse(fs.readFileSync(new URL('../scenario/flags.json', import.meta.url), 'utf8'));
 
 const env = { GH_ORG: 'example-demo-org', LD_PROJECT_KEY: 'example-demo-project', GH_RESET_TOKEN: 'gh-reset-secret', GH_DEMO_TOKEN: 'gh-demo-secret', LD_RESET_TOKEN: 'ld-reset-secret', LD_DEMO_TOKEN: 'ld-demo-secret' };
@@ -570,6 +570,46 @@ test('bootstrap refuses unknown project drift, inexact confirmation, and a missi
   await assert.rejects(() => bootstrapFlags(fetcher, env, env.LD_PROJECT_KEY, catalogFile, {}), /scenario identifier/);
 });
 const scenarioFiles = loadScenario(new URL('../', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
+test('ordinary evaluators connect per batch while only the rate probe stays sustained', () => {
+  const app = catalogSource('demo-catalog', ['demo-catalog-enrichment'], 'campaign-2026-08-16').files.find((file) => file.path === 'app.mjs').content;
+  assert.match(app, /const connect = \(\) => LaunchDarkly\.init/, 'client construction must be reusable, not a single module-level client');
+  const ordinary = app.slice(app.indexOf('} else {'), app.lastIndexOf('} finally {'));
+  assert.match(ordinary, /while \(!stopRequested\)[\s\S]*?const client = connect\(\)/, 'ordinary traffic must open a client inside the batch loop');
+  assert.match(ordinary, /await client\.close\(\)/, 'and close it before sleeping until the next batch');
+  assert.match(app, /connectionMs/, 'batch summaries must report how long the connection was held');
+  const probeBranch = app.slice(app.indexOf('} else if (probe) {'), app.indexOf('} else {'));
+  assert.match(probeBranch, /await probeTraffic\(client, options\)/, 'the bounded rate probe keeps one sustained connection by design');
+});
+test('generated traffic carries the scenario cluster topology, weighted and ordered least-populated first', () => {
+  const topology = clusterTopologyFor(scenarioFiles.sandbox.environments);
+  assert.equal(topology.production.length, 5, 'all five Production clusters must reach the evaluators');
+  assert.deepEqual(topology.production.map((cluster) => cluster.key), ['prod-eu-west-02', 'prod-sa-east-02', 'prod-us-east-02', 'prod-emea-central-04', 'prod-eu-west-01']);
+  assert.deepEqual(topology.production.map((cluster) => cluster.weight), [5, 10, 15, 30, 40]);
+  const cumulative = topology.production.reduce((running, cluster) => [...running, (running.at(-1) || 0) + cluster.weight], []);
+  assert.deepEqual(cumulative, [5, 15, 30, 60, 100], 'rolling out in order gives an accelerating crossover');
+  const traffic = catalogSource('demo-catalog', ['demo-catalog-enrichment'], 'campaign-2026-08-16', 'nodejs', 'v001', topology)
+    .files.find((file) => file.path === 'traffic.mjs').content;
+  for (const key of ['prod-eu-west-02', 'prod-us-east-02']) assert.match(traffic, new RegExp(key), `${key} must exist in generated traffic`);
+});
+test('sandbox validation refuses broken cluster weighting and ordering', () => {
+  const clone = () => JSON.parse(JSON.stringify(scenarioFiles.sandbox));
+  const light = clone(); light.environments[0].clusters[0].weight = 6;
+  assert.throws(() => assertSandbox(light), /sum to 101, not 100/);
+  const gap = clone(); gap.environments[0].clusters[2].rolloutOrder = 9;
+  assert.throws(() => assertSandbox(gap), /contiguous from 1/);
+  const backwards = clone();
+  const production = backwards.environments[0].clusters;
+  [production[0].weight, production[4].weight] = [production[4].weight, production[0].weight];
+  assert.throws(() => assertSandbox(backwards), /least-populated first/);
+});
+test('sandbox limits refuse a connection budget the plan cannot support', () => {
+  const clone = () => JSON.parse(JSON.stringify(scenarioFiles.sandbox));
+  assert.doesNotThrow(() => assertSandbox(clone()));
+  const greedy = clone(); greedy.limits.sustainedConnectionServices = 5;
+  assert.throws(() => assertSandbox(greedy), /exceed the plan ceiling/);
+  const overCeiling = clone(); overCeiling.limits.maxAverageServiceConnections = 9;
+  assert.throws(() => assertSandbox(overCeiling), /maxAverageServiceConnections/);
+});
 test('the tracked scenario compiles and satisfies the topology and consumer contract', () => {
   const model = compileScenario(scenarioFiles);
   assert.equal(model.scenarioId, 'campaign-2026-08-16');
@@ -645,6 +685,52 @@ test('reconcile creates missing catalog repositories and refuses ownership drift
   assert.equal(owned.created.length, 0);
   await assert.rejects(() => reconcileStep(make((name) => ({ scenarioId: 'someone-else', service: name })), env, scenarioFiles, 's001', { confirmation: env.LD_PROJECT_KEY }), /without this scenario's ownership marker/);
   await assert.rejects(() => reconcileStep(make(() => ({ scenarioId: 'campaign-2026-08-16', service: 'demo-wrong' })), env, scenarioFiles, 's001', { confirmation: env.LD_PROJECT_KEY }), /without this scenario's ownership marker/);
+});
+test('source updates arrive by squash-merged pull request, never a direct commit to main', async () => {
+  const calls = [];
+  const fetcher = async (url, options = {}) => {
+    const parsed = new URL(url); const method = options.method || 'GET';
+    calls.push({ path: parsed.pathname, method, body: options.body });
+    const reply = (body, status = 200) => ({ ok: status < 300, status, url: String(url), headers: {}, json: async () => body });
+    if (parsed.pathname.endsWith(`/contents/${OWNERSHIP_MARKER}`)) return reply({ content: Buffer.from(JSON.stringify({ scenarioId: 'campaign-2026-08-16', service: parsed.pathname.split('/')[3] })).toString('base64') });
+    if (parsed.pathname.includes('/git/ref/tags/')) return reply({ message: 'Not Found' }, 404);
+    if (parsed.pathname.includes('/git/ref/heads/main')) return reply({ object: { sha: 'main-sha' } });
+    if (parsed.pathname.includes('/git/ref/heads/scenario')) return reply({ message: 'Not Found' }, 404);
+    if (parsed.pathname.includes('/git/commits/')) return reply({ tree: { sha: 'tree-sha' } });
+    if (parsed.pathname.endsWith('/git/blobs')) return reply({ sha: 'blob-sha' });
+    if (parsed.pathname.endsWith('/git/trees')) return reply({ sha: 'new-tree' });
+    if (parsed.pathname.endsWith('/git/commits')) return reply({ sha: 'branch-commit' });
+    if (parsed.pathname.endsWith('/pulls')) return reply({ number: 42 });
+    if (parsed.pathname.endsWith('/merge')) return reply({ merged: true, sha: 'squashed-sha' });
+    return reply({});
+  };
+  const result = await reconcileStep(fetcher, env, scenarioFiles, 's002', { confirmation: env.LD_PROJECT_KEY });
+  assert.equal(result.updated.length, 4);
+  assert.equal(result.updated[0].pullNumber, 42);
+  assert.equal(result.updated[0].commitSha, 'squashed-sha', 'the tag must point at the squashed commit on main');
+  assert.equal(calls.filter((call) => call.path.endsWith('/pulls') && call.method === 'POST').length, 4, 'one pull request per changed service');
+  assert.equal(calls.filter((call) => call.path.endsWith('/merge') && call.method === 'PUT').length, 4);
+  assert.ok(calls.filter((call) => call.method === 'PUT' && call.path.endsWith('/merge')).every((call) => JSON.parse(call.body).merge_method === 'squash'));
+  assert.equal(calls.some((call) => call.method === 'PATCH' && call.path.endsWith('/git/refs/heads/main')), false, 'main is never written directly');
+  assert.equal(calls.filter((call) => call.method === 'DELETE' && call.path.includes('/git/refs/heads/scenario')).length, 4, 'branches are cleaned up');
+});
+test('a pull request that cannot be squash-merged stops the step', async () => {
+  const fetcher = async (url, options = {}) => {
+    const parsed = new URL(url); const method = options.method || 'GET';
+    const reply = (body, status = 200) => ({ ok: status < 300, status, url: String(url), headers: {}, json: async () => body });
+    if (parsed.pathname.endsWith(`/contents/${OWNERSHIP_MARKER}`)) return reply({ content: Buffer.from(JSON.stringify({ scenarioId: 'campaign-2026-08-16', service: parsed.pathname.split('/')[3] })).toString('base64') });
+    if (parsed.pathname.includes('/git/ref/tags/')) return reply({ message: 'Not Found' }, 404);
+    if (parsed.pathname.includes('/git/ref/heads/main')) return reply({ object: { sha: 'main-sha' } });
+    if (parsed.pathname.includes('/git/ref/heads/scenario')) return reply({ message: 'Not Found' }, 404);
+    if (parsed.pathname.includes('/git/commits/')) return reply({ tree: { sha: 'tree-sha' } });
+    if (parsed.pathname.endsWith('/git/blobs')) return reply({ sha: 'blob-sha' });
+    if (parsed.pathname.endsWith('/git/trees')) return reply({ sha: 'new-tree' });
+    if (parsed.pathname.endsWith('/git/commits')) return reply({ sha: 'branch-commit' });
+    if (parsed.pathname.endsWith('/pulls')) return reply({ number: 7 });
+    if (parsed.pathname.endsWith('/merge')) return reply({ message: 'Pull Request is not mergeable' }, 405);
+    return reply({});
+  };
+  await assert.rejects(() => reconcileStep(fetcher, env, scenarioFiles, 's002', { confirmation: env.LD_PROJECT_KEY }), /never falls back to committing directly/);
 });
 test('generated catalog source carries the ownership marker and literal flag keys', () => {
   const keys = ['demo-search-ranking-v3', 'demo-catalog-enrichment'];

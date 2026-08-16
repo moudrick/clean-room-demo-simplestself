@@ -45,6 +45,14 @@ x-search: &search
   stop_grace_period: 30s
   logging: *rotated-logs
 
+x-pricing: &pricing
+  build: ./repos/demo-pricing
+  image: clean-room-demo/demo-pricing:local
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *rotated-logs
+
 services:
   orders-production:
     <<: *orders
@@ -123,17 +131,17 @@ services:
       DEMO_ENVIRONMENT: staging
     command: ["npm", "run", "traffic", "--", "--profile", "staging"]
 
-  catalog-dev:
-    <<: *catalog
+  pricing-production:
+    <<: *pricing
     environment:
       <<: *runtime-environment
-      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_DEV:?missing dev SDK key}
-      DEMO_ENVIRONMENT: dev
-    command: ["npm", "run", "traffic", "--", "--profile", "dev"]
-  search-dev:
-    <<: *search
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+      DEMO_ENVIRONMENT: production
+    command: ["npm", "run", "traffic", "--", "--profile", "production"]
+  pricing-staging:
+    <<: *pricing
     environment:
       <<: *runtime-environment
-      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_DEV:?missing dev SDK key}
-      DEMO_ENVIRONMENT: dev
-    command: ["npm", "run", "traffic", "--", "--profile", "dev"]
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_STAGING:?missing staging SDK key}
+      DEMO_ENVIRONMENT: staging
+    command: ["npm", "run", "traffic", "--", "--profile", "staging"]

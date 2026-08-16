@@ -2,16 +2,45 @@
   "schemaVersion": 1,
   "scenarioId": "campaign-2026-08-16",
   "description": "Topology, safety limits, traffic patterns, and cadence windows for the campaign sandbox. Environment display order is Production, Staging, Test, Dev; rollout may still proceed from lower to higher environments.",
+  "clusterNote": "weight is the share of synthetic population, so evaluation volume matches how busy a cluster is. rolloutOrder goes least-populated first, which makes a rollout an accelerating curve rather than equal steps: 5, 15, 30, 60, 100 per cent of Production traffic serving true.",
   "environments": [
-    { "key": "production", "critical": true, "clusters": ["prod-eu-west-01", "prod-eu-west-02", "prod-emea-central-04", "prod-sa-east-02", "prod-us-east-02"] },
-    { "key": "staging", "critical": true, "clusters": ["stg-eu-central-01", "stg-eu-central-02"] },
-    { "key": "test", "critical": false, "clusters": ["test-eu-central-01", "test-eu-central-02"] },
-    { "key": "dev", "critical": false, "clusters": ["dev-local-01"] }
+    {
+      "key": "production", "critical": true,
+      "clusters": [
+        { "key": "prod-eu-west-02", "name": "Production EU West 02", "region": "eu-west", "ordinal": 2, "releaseRing": "canary", "weight": 5, "rolloutOrder": 1 },
+        { "key": "prod-sa-east-02", "name": "Production South America East 02", "region": "sa-east", "ordinal": 2, "releaseRing": "stable", "weight": 10, "rolloutOrder": 2 },
+        { "key": "prod-us-east-02", "name": "Production US East 02", "region": "us-east", "ordinal": 2, "releaseRing": "stable", "weight": 15, "rolloutOrder": 3 },
+        { "key": "prod-emea-central-04", "name": "Production EMEA Central 04", "region": "emea-central", "ordinal": 4, "releaseRing": "stable", "weight": 30, "rolloutOrder": 4 },
+        { "key": "prod-eu-west-01", "name": "Production EU West 01", "region": "eu-west", "ordinal": 1, "releaseRing": "stable", "weight": 40, "rolloutOrder": 5 }
+      ]
+    },
+    {
+      "key": "staging", "critical": true,
+      "clusters": [
+        { "key": "stg-eu-central-02", "name": "Staging EU Central 02", "region": "eu-central", "ordinal": 2, "releaseRing": "canary", "weight": 40, "rolloutOrder": 1 },
+        { "key": "stg-eu-central-01", "name": "Staging EU Central 01", "region": "eu-central", "ordinal": 1, "releaseRing": "stable", "weight": 60, "rolloutOrder": 2 }
+      ]
+    },
+    {
+      "key": "test", "critical": false,
+      "clusters": [
+        { "key": "test-eu-central-02", "name": "Test EU Central 02", "region": "eu-central", "ordinal": 2, "releaseRing": "canary", "weight": 25, "rolloutOrder": 1 },
+        { "key": "test-eu-central-01", "name": "Test EU Central 01", "region": "eu-central", "ordinal": 1, "releaseRing": "stable", "weight": 75, "rolloutOrder": 2 }
+      ]
+    },
+    {
+      "key": "dev", "critical": false,
+      "clusters": [
+        { "key": "dev-local-01", "name": "Development Local 01", "region": "local", "ordinal": 1, "releaseRing": "stable", "weight": 100, "rolloutOrder": 1 }
+      ]
+    }
   ],
   "limits": {
     "maxRepositories": 20,
     "maxFlags": 45,
     "maxEvaluatorContainers": 12,
+    "maxAverageServiceConnections": 5,
+    "sustainedConnectionServices": 1,
     "minEvaluationsPerHour": 10,
     "maxEvaluationsPerHour": 100000,
     "maxContextPoolSize": 10000

@@ -277,7 +277,7 @@ async function flushOutcome(client) {
   try { await client.flush(); return 'ok'; } catch { return 'failed'; }
 }
 async function evaluateOne(client, flag, context) { return client.boolVariation(flag, context, false); }
-async function ordinaryBatch(client, options, firstIndex) {
+async function ordinaryBatch(client, options, firstIndex, openedAt) {
   const count = batchSize(options.profile, new Date()); let attempted = 0; const perFlag = {}; const clusters = {};
   for (const flag of flags) perFlag[flag] = { true: 0, false: 0 };
   for (let item = 0; item < count && !stopRequested; item += 1) {
@@ -286,7 +286,7 @@ async function ordinaryBatch(client, options, firstIndex) {
     clusters[context.cluster.key] = (clusters[context.cluster.key] || 0) + 1;
   }
   const flush = await flushOutcome(client);
-  console.log(JSON.stringify({ type: 'traffic-batch', repository, release, flags, perFlag, profile: options.profile, generation: options.generation, contexts: count, attempted, clusters, flush }));
+  console.log(JSON.stringify({ type: 'traffic-batch', repository, release, flags, perFlag, profile: options.profile, generation: options.generation, contexts: count, attempted, clusters, flush, connectionMs: openedAt ? Date.now() - openedAt : null }));
   if (flush !== 'ok') throw new Error('SDK flush failed.');
   return count;
 }
@@ -316,7 +316,7 @@ async function main() {
   const sdkKey = process.env.LD_EVALUATION_SDK_KEY;
   if (!sdkKey) throw new Error('LD_EVALUATION_SDK_KEY is required.');
   const options = optionsFrom(process.argv.slice(2)); const probe = options.traffic && isLoadProbe(repository, options.profile);
-  const client = LaunchDarkly.init(sdkKey, {
+  const connect = () => LaunchDarkly.init(sdkKey, {
     capacity: 10000, flushInterval: 5, enableEventCompression: true,
     contextKeysCapacity: Math.min(options.contextPoolSize, 10000), contextKeysFlushInterval: 300, logger,
     application: { id: repository, name: repository + ' synthetic evaluator', version: release, versionName: probe ? 'production-load-probe' : 'standard-traffic' }
@@ -324,31 +324,44 @@ async function main() {
   const stop = () => { stopRequested = true; if (wake) wake(); };
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
   try {
-    await client.waitForInitialization({ timeout: 10 });
     if (!options.traffic) {
-      for (let index = 0; index < options.evaluations; index += 1) {
-        const context = contextForOneShot(repository, options, index);
-        for (const flag of flags) console.log(JSON.stringify({ repository, release, flag, value: await evaluateOne(client, flag, context), context }));
+      const client = connect();
+      try {
+        await client.waitForInitialization({ timeout: 10 });
+        for (let index = 0; index < options.evaluations; index += 1) {
+          const context = contextForOneShot(repository, options, index);
+          for (const flag of flags) console.log(JSON.stringify({ repository, release, flag, value: await evaluateOne(client, flag, context), context }));
+        }
+      } finally { await client.flush(); await client.close(); }
+    } else if (probe) {
+      // The bounded rate probe keeps one sustained connection on purpose: its
+      // evaluations-per-hour figure only means anything if pacing stays continuous.
+      const client = connect();
+      try { await client.waitForInitialization({ timeout: 10 }); await probeTraffic(client, options); }
+      finally { await client.flush(); await client.close(); }
+    } else {
+      // Ordinary traffic connects only for the duration of each batch. LaunchDarkly
+      // meters average concurrent service connections, so a client held open between
+      // batches would cost a full connection while evaluating nothing.
+      let index = 0;
+      while (!stopRequested) {
+        const openedAt = Date.now(); const client = connect();
+        try {
+          await client.waitForInitialization({ timeout: 10 });
+          index += await ordinaryBatch(client, options, index, openedAt);
+        } finally { await client.flush(); await client.close(); }
+        if (!stopRequested) await wait(options.intervalSeconds * 1000);
       }
-    } else if (probe) await probeTraffic(client, options);
-    else { let index = 0; while (!stopRequested) { index += await ordinaryBatch(client, options, index); if (!stopRequested) await wait(options.intervalSeconds * 1000); } }
+    }
   } finally {
     process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop);
-    await client.flush(); await client.close();
   }
 }
 
 main().catch(() => { console.error('Error: evaluator failed.'); process.exitCode = 1; });
 `;
 }
-function trafficSource() {
-  return `const profiles = {
-  production: { enterprise: 10, beta: 15, legacy: 8, busy: 100, quiet: 40 },
-  staging: { enterprise: 20, beta: 30, legacy: 20, busy: 30, quiet: 12 },
-  test: { enterprise: 30, beta: 35, legacy: 30, busy: 10, quiet: 4 },
-  dev: { enterprise: 15, beta: 25, legacy: 12, busy: 2, quiet: 1 }
-};
-export const clusters = {
+export const DEFAULT_CLUSTER_TOPOLOGY = {
   production: [
     { key: 'prod-eu-west-01', name: 'Production EU West 01', environment: 'production', region: 'eu-west', ordinal: 1, releaseRing: 'stable', weight: 50 },
     { key: 'prod-emea-central-04', name: 'Production EMEA Central 04', environment: 'production', region: 'emea-central', ordinal: 4, releaseRing: 'canary', weight: 30 },
@@ -364,6 +377,21 @@ export const clusters = {
   ],
   dev: [{ key: 'dev-local-01', name: 'Development Local 01', environment: 'dev', region: 'local', ordinal: 1, releaseRing: 'stable', weight: 100 }]
 };
+export function clusterTopologyFor(environments) {
+  return Object.fromEntries(environments.map((environment) => [environment.key,
+    [...environment.clusters].sort((a, b) => a.rolloutOrder - b.rolloutOrder).map((cluster) => ({
+      key: cluster.key, name: cluster.name, environment: environment.key, region: cluster.region,
+      ordinal: cluster.ordinal, releaseRing: cluster.releaseRing, weight: cluster.weight
+    }))]));
+}
+function trafficSource(topology = DEFAULT_CLUSTER_TOPOLOGY) {
+  return `const profiles = {
+  production: { enterprise: 10, beta: 15, legacy: 8, busy: 100, quiet: 40 },
+  staging: { enterprise: 20, beta: 30, legacy: 20, busy: 30, quiet: 12 },
+  test: { enterprise: 30, beta: 35, legacy: 30, busy: 10, quiet: 4 },
+  dev: { enterprise: 15, beta: 25, legacy: 12, busy: 2, quiet: 1 }
+};
+export const clusters = ${JSON.stringify(topology, null, 2)};
 const offsets = { 'demo-orders': 11, 'demo-storefront': 43, 'demo-profile': 71 };
 const clusterKey = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const knownService = (repository) => typeof repository === 'string' && clusterKey.test(repository);
@@ -420,11 +448,11 @@ export function batchSize(profile, at) {
 }
 `;
 }
-function repositoryFiles(repository, flags, release = 'v001') {
+function repositoryFiles(repository, flags, release = 'v001', topology = DEFAULT_CLUSTER_TOPOLOGY) {
   return [
     { path: 'package.json', content: `${JSON.stringify({ name: repository, private: true, type: 'module', scripts: { evaluate: 'node app.mjs', traffic: 'node app.mjs --traffic' }, dependencies: { '@launchdarkly/node-server-sdk': '^9.0.0' } }, null, 2)}\n` },
     { path: 'app.mjs', content: evaluatorSource(repository, flags, release) },
-    { path: 'traffic.mjs', content: trafficSource() },
+    { path: 'traffic.mjs', content: trafficSource(topology) },
     { path: 'Dockerfile', content: "FROM node:24-alpine\nENV NPM_CONFIG_UPDATE_NOTIFIER=false\nWORKDIR /app\nCOPY package.json ./\nRUN npm install --omit=dev\nCOPY app.mjs traffic.mjs ./\nUSER node\nCMD [\"npm\", \"run\", \"traffic\"]\n" },
     { path: '.gitignore', content: 'node_modules/\n.env\n' },
     { path: 'README.md', content: `# ${repository} synthetic evaluator\n\nRun \`npm install\`, set \`LD_EVALUATION_SDK_KEY\`, then use \`npm run evaluate -- --cohort checkout-beta --cluster prod-eu-west-01\` for a ten-evaluation one-shot batch or \`npm run traffic -- --profile production\` for cumulative traffic. One-shot count can be changed with \`--evaluations\`; \`--cluster\` selects a fixed synthetic cluster. Only demo-orders Production accepts \`--evaluations-per-hour 10..100000\` and \`--context-pool-size 1..10000\`. Stop traffic with Ctrl+C so pending events flush.\n` }
@@ -800,12 +828,34 @@ export function assertSandbox(sandbox) {
     const expected = ENVIRONMENTS[index];
     if (environment.key !== expected.key) throw new Error(`sandbox.json environment order must be ${ENVIRONMENT_KEYS.join(', ')}.`);
     if (environment.critical !== expected.critical) throw new Error(`sandbox.json environment ${environment.key} must declare critical ${expected.critical}.`);
-    if (!Array.isArray(environment.clusters) || !environment.clusters.length || environment.clusters.some((cluster) => !DNS_LABEL.test(cluster))) throw new Error(`sandbox.json environment ${environment.key} has an invalid cluster list.`);
+    const clusters = environment.clusters;
+    if (!Array.isArray(clusters) || !clusters.length) throw new Error(`sandbox.json environment ${environment.key} has an invalid cluster list.`);
+    let total = 0; const orders = new Set(); const keys = new Set();
+    for (const cluster of clusters) {
+      if (!DNS_LABEL.test(cluster?.key || '')) throw new Error(`sandbox.json environment ${environment.key} has an invalid cluster key.`);
+      if (keys.has(cluster.key)) throw new Error(`sandbox.json repeats cluster ${cluster.key}.`);
+      keys.add(cluster.key);
+      if (!Number.isInteger(cluster.weight) || cluster.weight < 1 || cluster.weight > 100) throw new Error(`Cluster ${cluster.key} must declare an integer population weight from 1 to 100.`);
+      if (!Number.isInteger(cluster.rolloutOrder) || cluster.rolloutOrder < 1) throw new Error(`Cluster ${cluster.key} must declare a positive rolloutOrder.`);
+      if (orders.has(cluster.rolloutOrder)) throw new Error(`sandbox.json environment ${environment.key} repeats rolloutOrder ${cluster.rolloutOrder}.`);
+      orders.add(cluster.rolloutOrder); total += cluster.weight;
+    }
+    if (total !== 100) throw new Error(`sandbox.json environment ${environment.key} cluster weights sum to ${total}, not 100.`);
+    for (let order = 1; order <= clusters.length; order += 1) if (!orders.has(order)) throw new Error(`sandbox.json environment ${environment.key} rolloutOrder must be contiguous from 1; ${order} is missing.`);
+    // Least-populated-first is what makes a rollout an accelerating curve instead of equal steps.
+    const byOrder = [...clusters].sort((a, b) => a.rolloutOrder - b.rolloutOrder);
+    for (let index = 1; index < byOrder.length; index += 1) {
+      if (byOrder[index].weight < byOrder[index - 1].weight) throw new Error(`sandbox.json environment ${environment.key} rolls out ${byOrder[index].key} (weight ${byOrder[index].weight}) after the heavier ${byOrder[index - 1].key} (weight ${byOrder[index - 1].weight}); order least-populated first.`);
+    }
   });
   const limits = sandbox.limits || {};
-  for (const [key, min, max] of [['maxRepositories', 1, 20], ['maxFlags', 1, CATALOG_MAX_FLAGS], ['maxEvaluatorContainers', 1, 12]]) {
+  for (const [key, min, max] of [['maxRepositories', 1, 20], ['maxFlags', 1, CATALOG_MAX_FLAGS], ['maxEvaluatorContainers', 1, 12], ['maxAverageServiceConnections', 1, 5], ['sustainedConnectionServices', 0, 5]]) {
     if (!Number.isInteger(limits[key]) || limits[key] < min || limits[key] > max) throw new Error(`sandbox.json limit ${key} must be an integer between ${min} and ${max}.`);
   }
+  // Only sustained connections cost a full average connection each; batch evaluators
+  // hold one for seconds per cycle and are budgeted at well under a tenth.
+  const projected = limits.sustainedConnectionServices + Math.ceil(limits.maxEvaluatorContainers / 10);
+  if (projected > limits.maxAverageServiceConnections) throw new Error(`Projected average service connections (${projected}) exceed the plan ceiling of ${limits.maxAverageServiceConnections}. Reduce sustained connections or evaluator containers.`);
   const cadence = sandbox.cadence || {};
   if (!Array.isArray(cadence.dailyTransitions) || !Array.isArray(cadence.dailyWindows)) throw new Error('sandbox.json must define cadence.dailyTransitions and cadence.dailyWindows.');
   for (const window of cadence.dailyWindows) if (dayNumber(window.from) > dayNumber(window.to)) throw new Error('sandbox.json contains a daily window that ends before it starts.');
@@ -929,9 +979,9 @@ export function loadScenario(root = process.cwd(), fileSystem = fs) {
   return { sandbox: read('sandbox.json'), services: read('services.json'), catalog: read('flags.json'), steps, stepFiles: files };
 }
 export const OWNERSHIP_MARKER = '.scenario-owner.json';
-export function catalogSource(serviceKey, flags, scenarioId, template = 'nodejs', release = 'v001') {
+export function catalogSource(serviceKey, flags, scenarioId, template = 'nodejs', release = 'v001', topology = DEFAULT_CLUSTER_TOPOLOGY) {
   if (template !== 'nodejs') throw new Error(`Source template "${template}" is not implemented yet. Wave 1 is Node.js only; TypeScript, Go, and Python arrive with Waves 2 and 3.`);
-  const files = repositoryFiles(serviceKey, flags, release);
+  const files = repositoryFiles(serviceKey, flags, release, topology);
   files.push({ path: OWNERSHIP_MARKER, content: `${JSON.stringify({ scenarioId, service: serviceKey, template, release }, null, 2)}\n` });
   return { files, date: null };
 }
@@ -950,12 +1000,19 @@ export async function readOwnershipMarker(fetcher, token, settings, name, contro
     return JSON.parse(Buffer.from(file.content, 'base64').toString('utf8'));
   } catch (error) { if (/\(404\)/.test(error.message)) return null; throw error; }
 }
-async function commitSourceUpdate(fetcher, token, settings, name, source, message, controls) {
-  const ref = await gh(fetcher, `/repos/${settings.org}/${name}/git/ref/heads/main`, token, undefined, controls);
-  const parentSha = ref.object?.sha;
-  if (!parentSha) throw new Error(`Repository ${name} has no main reference to fast-forward.`);
+async function mergeSourceViaPullRequest(fetcher, token, settings, name, source, meta, controls) {
+  const { branch, title, body } = meta;
+  const base = await gh(fetcher, `/repos/${settings.org}/${name}/git/ref/heads/main`, token, undefined, controls);
+  const parentSha = base.object?.sha;
+  if (!parentSha) throw new Error(`Repository ${name} has no main reference to branch from.`);
   const parent = await gh(fetcher, `/repos/${settings.org}/${name}/git/commits/${parentSha}`, token, undefined, controls);
   if (!parent.tree?.sha) throw new Error(`Repository ${name} has incomplete commit evidence.`);
+  // A branch left behind by an interrupted run is cleared rather than reused, so the
+  // change is always built from the current main head.
+  if (await refIfPresent(fetcher, token, settings, name, `heads/${branch}`, controls)) {
+    await gh(fetcher, `/repos/${settings.org}/${name}/git/refs/heads/${branch}`, token, { method: 'DELETE' }, controls);
+  }
+  await gh(fetcher, `/repos/${settings.org}/${name}/git/refs`, token, { method: 'POST', body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: parentSha }) }, controls);
   const entries = [];
   for (const file of source.files) {
     const blob = await gh(fetcher, `/repos/${settings.org}/${name}/git/blobs`, token, { method: 'POST', body: JSON.stringify({ content: file.content, encoding: 'utf-8' }) }, controls);
@@ -964,9 +1021,19 @@ async function commitSourceUpdate(fetcher, token, settings, name, source, messag
   }
   const tree = await gh(fetcher, `/repos/${settings.org}/${name}/git/trees`, token, { method: 'POST', body: JSON.stringify({ base_tree: parent.tree.sha, tree: entries }) }, controls);
   const who = { name: 'Synthetic Demo', email: 'synthetic-demo@example.invalid', date: new Date().toISOString() };
-  const commit = await gh(fetcher, `/repos/${settings.org}/${name}/git/commits`, token, { method: 'POST', body: JSON.stringify({ message, tree: tree.sha, parents: [parentSha], author: who, committer: who }) }, controls);
-  await gh(fetcher, `/repos/${settings.org}/${name}/git/refs/heads/main`, token, { method: 'PATCH', body: JSON.stringify({ sha: commit.sha, force: false }) }, controls);
-  return { commitSha: commit.sha, parentSha };
+  const commit = await gh(fetcher, `/repos/${settings.org}/${name}/git/commits`, token, { method: 'POST', body: JSON.stringify({ message: title, tree: tree.sha, parents: [parentSha], author: who, committer: who }) }, controls);
+  await gh(fetcher, `/repos/${settings.org}/${name}/git/refs/heads/${branch}`, token, { method: 'PATCH', body: JSON.stringify({ sha: commit.sha, force: false }) }, controls);
+  const pull = await gh(fetcher, `/repos/${settings.org}/${name}/pulls`, token, { method: 'POST', body: JSON.stringify({ title, body, head: branch, base: 'main' }) }, controls);
+  if (!Number.isInteger(pull?.number)) throw new Error(`Opening a pull request on ${name} did not return a pull number.`);
+  let merged;
+  try {
+    merged = await gh(fetcher, `/repos/${settings.org}/${name}/pulls/${pull.number}/merge`, token, { method: 'PUT', body: JSON.stringify({ merge_method: 'squash', commit_title: title }) }, controls);
+  } catch (error) {
+    throw new Error(`Squash-merging ${name}#${pull.number} failed: ${error.message}. The step stops here; it never falls back to committing directly to main.`);
+  }
+  if (!merged?.merged || !merged.sha) throw new Error(`Pull request ${name}#${pull.number} did not report a completed squash merge.`);
+  await gh(fetcher, `/repos/${settings.org}/${name}/git/refs/heads/${branch}`, token, { method: 'DELETE' }, controls);
+  return { commitSha: merged.sha, parentSha, pullNumber: pull.number };
 }
 export function stepsThrough(steps, targetId) {
   const index = steps.findIndex((step) => step.id === targetId);
@@ -996,7 +1063,7 @@ export async function reconcileStep(fetcher, env, scenario, targetId, controls =
       adopted.push({ service: key, repositoryId: existing.id ?? null, nodeId: existing.node_id ?? null });
     } else {
       const references = (step.sourceReferences || {})[key] || [];
-      const source = catalogSource(key, references, compiled.scenarioId, service.template, (step.releaseTags || {})[key] || "v001");
+      const source = catalogSource(key, references, compiled.scenarioId, service.template, (step.releaseTags || {})[key] || "v001", clusterTopologyFor(scenario.sandbox.environments));
       const result = await commitInitialSource(fetcher, t.GH_RESET_TOKEN, settings, key, source, requestControls);
       const version = (step.releaseTags || {})[key];
       const tag = version ? `${key}-${version}` : null;
@@ -1011,7 +1078,17 @@ export async function reconcileStep(fetcher, env, scenario, targetId, controls =
     const service = byKey.get(key);
     if (!service) throw new Error(`Refusing a repository outside the service catalog: ${key}`);
     const marker = await readOwnershipMarker(fetcher, t.GH_RESET_TOKEN, settings, key, requestControls);
-    if (!marker || marker.scenarioId !== compiled.scenarioId || marker.service !== key) throw new Error(`Repository ${settings.org}/${key} is not marked as owned by this scenario; refusing to fast-forward it.`);
+    if (marker) {
+      if (marker.scenarioId !== compiled.scenarioId || marker.service !== key) throw new Error(`Repository ${settings.org}/${key} carries a foreign ownership marker; refusing to fast-forward it.`);
+    } else {
+      // The three pre-campaign repositories were created before ownership markers existed.
+      // Their identity evidence is the repository id captured in campaign.json at baseline,
+      // and this very update is what gives them a marker from here on.
+      const recorded = (controls.campaign?.repositories || []).find((repository) => repository.name === key);
+      if (service.cohort !== 'pre-campaign' || !recorded) throw new Error(`Repository ${settings.org}/${key} is not marked as owned by this scenario; refusing to fast-forward it.`);
+      const remote = await repositoryIfPresent(fetcher, t.GH_RESET_TOKEN, settings, key, requestControls);
+      if (!remote || remote.id !== recorded.id) throw new Error(`Repository ${settings.org}/${key} does not match the repository id recorded at campaign baseline; continuity is lost, refusing to fast-forward it.`);
+    }
     const references = compiled.services.find((item) => item.key === key)?.references || [];
     const version = (step.releaseTags || {})[key] || 'v001';
     const tag = `${key}-${version}`;
@@ -1019,8 +1096,17 @@ export async function reconcileStep(fetcher, env, scenario, targetId, controls =
     if (already) {
       updated.push({ service: key, tag, commitSha: already.object?.sha ?? null, alreadyApplied: true });
     } else {
-      const source = catalogSource(key, references, compiled.scenarioId, service.template, version);
-      const result = await commitSourceUpdate(fetcher, t.GH_RESET_TOKEN, settings, key, source, `Advance ${key} to ${version}`, requestControls);
+      const source = catalogSource(key, references, compiled.scenarioId, service.template, version, clusterTopologyFor(scenario.sandbox.environments));
+      const title = `${step.id}: advance ${key} to ${version}`;
+      const body = [
+        step.title || '',
+        '',
+        `Scenario ${compiled.scenarioId}, step ${step.id}, release ${version}.`,
+        references.length ? `Flags referenced by this release: ${references.join(', ')}.` : 'This release references no flags.',
+        '',
+        'Generated by the scenario reconciler. Synthetic content; no production system is involved.'
+      ].join('\n');
+      const result = await mergeSourceViaPullRequest(fetcher, t.GH_RESET_TOKEN, settings, key, source, { branch: `scenario/${step.id}-${key}`, title, body }, requestControls);
       await gh(fetcher, `/repos/${settings.org}/${key}/git/refs`, t.GH_RESET_TOKEN, { method: 'POST', body: JSON.stringify({ ref: `refs/tags/${tag}`, sha: result.commitSha }) }, requestControls);
       updated.push({ service: key, ...result, tag, references });
     }
