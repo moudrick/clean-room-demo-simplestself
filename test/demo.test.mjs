@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE, loadScenario, compileScenario, assertSandbox, assertServices, reconcileStep, catalogSource, OWNERSHIP_MARKER, clusterTopologyFor } from '../lib.mjs';
+import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE, loadScenario, compileScenario, assertSandbox, assertServices, reconcileStep, catalogSource, OWNERSHIP_MARKER, clusterTopologyFor, targetingInstructions } from '../lib.mjs';
 const catalogFile = JSON.parse(fs.readFileSync(new URL('../scenario/flags.json', import.meta.url), 'utf8'));
 
 const env = { GH_ORG: 'example-demo-org', LD_PROJECT_KEY: 'example-demo-project', GH_RESET_TOKEN: 'gh-reset-secret', GH_DEMO_TOKEN: 'gh-demo-secret', LD_RESET_TOKEN: 'ld-reset-secret', LD_DEMO_TOKEN: 'ld-demo-secret' };
@@ -731,6 +731,35 @@ test('a pull request that cannot be squash-merged stops the step', async () => {
     return reply({});
   };
   await assert.rejects(() => reconcileStep(fetcher, env, scenarioFiles, 's002', { confirmation: env.LD_PROJECT_KEY }), /never falls back to committing directly/);
+});
+const flagFixture = { key: 'demo-cart-v2', variations: [{ value: true, _id: 'on-id' }, { value: false, _id: 'off-id' }] };
+test('targeting instructions express rollout as fallthrough false plus one rule per cluster', () => {
+  const rolling = targetingInstructions({ flag: 'demo-cart-v2', environment: 'production', state: 'on', clusters: ['prod-eu-west-02', 'prod-sa-east-02'] }, flagFixture);
+  assert.ok(rolling.some((item) => item.kind === 'turnFlagOn'));
+  assert.deepEqual(rolling.find((item) => item.kind === 'updateFallthroughVariationOrRollout'), { kind: 'updateFallthroughVariationOrRollout', variationId: 'off-id' }, 'untargeted contexts must keep receiving false');
+  const rules = rolling.find((item) => item.kind === 'replaceRules').rules;
+  assert.equal(rules.length, 2);
+  assert.deepEqual(rules[0].clauses[0], { contextKind: 'cluster', attribute: 'key', op: 'in', negate: false, values: ['prod-eu-west-02'] });
+  assert.ok(rules.every((item) => item.variationId === 'on-id'));
+  const done = targetingInstructions({ flag: 'demo-cart-v2', environment: 'production', state: 'on', serve: 'true' }, flagFixture);
+  assert.equal(done.find((item) => item.kind === 'updateFallthroughVariationOrRollout').variationId, 'on-id', 'fully rolled out means fallthrough true');
+  assert.deepEqual(done.find((item) => item.kind === 'replaceRules').rules, [], 'and no rules left to distinguish clusters');
+  const off = targetingInstructions({ flag: 'demo-cart-v2', environment: 'production', state: 'off' }, flagFixture);
+  assert.ok(off.some((item) => item.kind === 'turnFlagOff'));
+});
+test('the compiler enforces cluster membership and least-populated-first rollout order', () => {
+  const withTargeting = (targeting) => {
+    const base = JSON.parse(JSON.stringify(scenarioFiles));
+    base.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: '2026-08-25', cadence: 'three-day', targeting });
+    return base;
+  };
+  assert.throws(() => compileScenario(withTargeting([{ flag: 'demo-nope', environment: 'production', state: 'on' }])), /unknown flag/);
+  assert.throws(() => compileScenario(withTargeting([{ flag: 'demo-cart-v2', environment: 'preprod', state: 'on' }])), /unknown environment/);
+  assert.throws(() => compileScenario(withTargeting([{ flag: 'demo-cart-v2', environment: 'production', state: 'on', clusters: ['stg-eu-central-01'] }])), /does not belong to production/);
+  assert.throws(() => compileScenario(withTargeting([{ flag: 'demo-cart-v2', environment: 'production', state: 'on', serve: 'true', clusters: ['prod-eu-west-02'] }])), /already covers every context/);
+  assert.throws(() => compileScenario(withTargeting([{ flag: 'demo-cart-v2', environment: 'production', state: 'on', clusters: ['prod-eu-west-01'] }])), /out of rollout order/);
+  assert.doesNotThrow(() => compileScenario(withTargeting([{ flag: 'demo-cart-v2', environment: 'production', state: 'on', clusters: ['prod-eu-west-02', 'prod-sa-east-02'] }])), 'a prefix of the rollout order is accepted');
+  assert.doesNotThrow(() => compileScenario(withTargeting([{ flag: 'demo-cart-v2', environment: 'production', state: 'on', clusters: ['prod-eu-west-01'], exception: 'intentionally limited to the largest cluster' }])), 'a declared exception models a deliberate limited rollout');
 });
 test('generated catalog source carries the ownership marker and literal flag keys', () => {
   const keys = ['demo-search-ranking-v3', 'demo-catalog-enrichment'];

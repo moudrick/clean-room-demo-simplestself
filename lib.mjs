@@ -44,7 +44,7 @@ export function tokensFor(command, env) {
     audit: ['GH_DEMO_TOKEN', 'LD_DEMO_TOKEN'],
     baseline: ['GH_DEMO_TOKEN', 'LD_DEMO_TOKEN'],
     bootstrap: ['LD_RESET_TOKEN'],
-    reconcile: ['GH_RESET_TOKEN'],
+    reconcile: ['GH_RESET_TOKEN', 'LD_RESET_TOKEN'],
     scenario: ['GH_DEMO_TOKEN', 'LD_DEMO_TOKEN'],
     doctor: ['GH_DEMO_TOKEN', 'GH_RESET_TOKEN', 'LD_DEMO_TOKEN', 'LD_RESET_TOKEN'],
     recreate: ['GH_RESET_TOKEN', 'LD_RESET_TOKEN'],
@@ -904,6 +904,8 @@ export function compileScenario({ sandbox, services, catalog, steps }) {
     if (service.cohort !== 'pre-campaign') continue;
     introduced.set(service.key, { key: service.key, template: service.template, references: [...(PRE_CAMPAIGN_REFERENCES[service.key] || [])], tag: null, introducedBy: 'pre-campaign' });
   }
+  const catalogKeys = new Set(catalog.flags.map((flag) => flag.key));
+  const targeting = new Map();
   let deployments = []; const seenIds = new Set(); const applied = []; let previous = null;
   for (const step of steps) {
     if (!step || step.schemaVersion !== 1) throw new Error('A scenario step is missing or declares an unsupported schema version.');
@@ -956,16 +958,60 @@ export function compileScenario({ sandbox, services, catalog, steps }) {
       if (next.length > cap) throw new Error(`Step ${step.id} declares ${next.length} evaluator containers, exceeding the cap of ${cap}.`);
       deployments = next;
     }
+    for (const entry of step.targeting || []) {
+      if (!catalogKeys.has(entry.flag)) throw new Error(`Step ${step.id} targets unknown flag ${entry.flag}.`);
+      const clusters = environmentClusters.get(entry.environment);
+      if (!clusters) throw new Error(`Step ${step.id} targets ${entry.flag} in unknown environment ${entry.environment}.`);
+      if (!['on', 'off'].includes(entry.state)) throw new Error(`Step ${step.id} sets an unknown state "${entry.state}" for ${entry.flag}.`);
+      if (entry.serve !== undefined && !['true', 'false'].includes(entry.serve)) throw new Error(`Step ${step.id} sets an unknown serve value for ${entry.flag}.`);
+      if (entry.serve === 'true' && (entry.clusters || []).length) throw new Error(`Step ${step.id} serves true and also lists clusters for ${entry.flag}; the fallthrough already covers every context.`);
+      const known = new Map(clusters.map((cluster) => [cluster.key, cluster]));
+      for (const key of entry.clusters || []) if (!known.has(key)) throw new Error(`Step ${step.id} targets cluster ${key}, which does not belong to ${entry.environment}.`);
+      // Rollout goes least-populated first, so the targeted set must be a prefix of rolloutOrder.
+      // A deliberate rollback or intentionally limited flag declares an exception instead.
+      if (!entry.exception && (entry.clusters || []).length) {
+        const orders = entry.clusters.map((key) => known.get(key).rolloutOrder).sort((a, b) => a - b);
+        orders.forEach((order, index) => {
+          if (order !== index + 1) throw new Error(`Step ${step.id} targets ${entry.flag} in ${entry.environment} out of rollout order; expected the least-populated clusters first. Declare "exception" to model a deliberate rollback or limited rollout.`);
+        });
+      }
+      targeting.set(`${entry.flag}/${entry.environment}`, {
+        flag: entry.flag, environment: entry.environment, state: entry.state,
+        serve: entry.serve || 'false', clusters: [...(entry.clusters || [])], exception: entry.exception || null
+      });
+    }
     applied.push({ id: step.id, recommendedDate: step.recommendedDate, cadence: step.cadence, title: step.title || '' });
     previous = step;
   }
+  const targetingList = [...targeting.values()].sort((a, b) => `${a.flag}/${a.environment}`.localeCompare(`${b.flag}/${b.environment}`));
   const model = {
     scenarioId: sandbox.scenarioId,
     services: [...introduced.values()].map((service) => ({ ...service, references: [...service.references].sort() })).sort((a, b) => a.key.localeCompare(b.key)),
     deployments: [...deployments].sort((a, b) => `${a.service}/${a.environment}`.localeCompare(`${b.service}/${b.environment}`)),
+    targeting: targetingList,
     steps: applied
   };
-  return { ...model, checksum: scenarioChecksum(model) };
+  return { ...model, checksum: scenarioChecksum(model), distribution: targetingDistribution(targetingList, catalog, sandbox) };
+}
+export function targetingDistribution(targetingList, catalog, sandbox) {
+  const environments = sandbox.environments.map((environment) => environment.key);
+  const byFlag = new Map();
+  for (const entry of targetingList) {
+    if (!byFlag.has(entry.flag)) byFlag.set(entry.flag, new Map());
+    byFlag.get(entry.flag).set(entry.environment, entry);
+  }
+  const onEverywhere = []; const onBelowProduction = []; const rollingOut = []; const untouched = [];
+  for (const flag of catalog.flags) {
+    const states = byFlag.get(flag.key);
+    if (!states) { untouched.push(flag.key); continue; }
+    const live = environments.filter((key) => states.get(key)?.state === 'on');
+    const serving = environments.filter((key) => states.get(key)?.serve === 'true');
+    if (serving.length === environments.length) onEverywhere.push(flag.key);
+    else if (serving.length && !serving.includes('production')) onBelowProduction.push(flag.key);
+    else if (live.length) rollingOut.push(flag.key);
+    else untouched.push(flag.key);
+  }
+  return { onEverywhere, onBelowProduction, rollingOut, untouched };
 }
 export function scenarioChecksum(model) {
   return crypto.createHash('sha256').update(JSON.stringify(model)).digest('hex').slice(0, 16);
@@ -977,6 +1023,37 @@ export function loadScenario(root = process.cwd(), fileSystem = fs) {
   const files = fileSystem.readdirSync(stepsDirectory).filter((name) => name.endsWith('.json')).sort();
   const steps = files.map((name) => JSON.parse(fileSystem.readFileSync(path.join(stepsDirectory, name), 'utf8')));
   return { sandbox: read('sandbox.json'), services: read('services.json'), catalog: read('flags.json'), steps, stepFiles: files };
+}
+export function targetingInstructions(entry, flag) {
+  const enabled = variationId(flag, true); const disabled = variationId(flag, false);
+  const instructions = [{ kind: 'updateOffVariation', variationId: disabled }];
+  if (entry.state === 'off') {
+    instructions.push({ kind: 'turnFlagOff' }, { kind: 'replaceRules', rules: [] });
+    return instructions;
+  }
+  instructions.push({ kind: 'turnFlagOn' });
+  // Fallthrough is what every context not matched by a cluster rule receives. A rollout
+  // keeps it on false and moves clusters across one rule at a time; the terminal
+  // "fully rolled out" state is fallthrough true with the rules cleared.
+  instructions.push({ kind: 'updateFallthroughVariationOrRollout', variationId: entry.serve === 'true' ? enabled : disabled });
+  instructions.push({ kind: 'replaceRules', rules: (entry.clusters || []).map((key) => rule('cluster', 'key', key, enabled)) });
+  return instructions;
+}
+export async function applyTargeting(fetcher, token, settings, entries, controls = {}) {
+  const applied = [];
+  for (const entry of entries) {
+    const flag = await ld(fetcher, `/api/v2/flags/${settings.project}/${entry.flag}`, token, undefined, controls.request);
+    if (flag?.key !== entry.flag) throw new Error(`LaunchDarkly flag ${entry.flag} could not be read for targeting.`);
+    const instructions = targetingInstructions(entry, flag);
+    await ld(fetcher, `/api/v2/flags/${settings.project}/${entry.flag}`, token, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json; domain-model=launchdarkly.semanticpatch' },
+      body: JSON.stringify({ environmentKey: entry.environment, instructions, comment: entry.comment || 'Scenario targeting change' })
+    }, controls.request);
+    applied.push({ flag: entry.flag, environment: entry.environment, state: entry.state, serve: entry.serve || 'false', clusters: entry.clusters || [] });
+    if (controls.onTargeting) await controls.onTargeting(applied.at(-1));
+  }
+  return applied;
 }
 export const OWNERSHIP_MARKER = '.scenario-owner.json';
 export function catalogSource(serviceKey, flags, scenarioId, template = 'nodejs', release = 'v001', topology = DEFAULT_CLUSTER_TOPOLOGY) {
@@ -1113,7 +1190,13 @@ export async function reconcileStep(fetcher, env, scenario, targetId, controls =
     completed += 1;
     if (controls.onProgress) await controls.onProgress({ completed, total, label: `${already ? 'Already at' : 'Fast-forwarded'} ${key} ${version}` });
   }
-  return { step: step.id, checksum: compiled.checksum, created, adopted, updated };
+  const targeted = (step.targeting || []).length
+    ? await applyTargeting(fetcher, t.LD_RESET_TOKEN, settings, step.targeting, {
+        request: requestControls,
+        onTargeting: (entry) => controls.onProgress?.({ completed: total, total: total || 1, label: `Targeting ${entry.flag} in ${entry.environment}: ${entry.state}, serving ${entry.serve}${entry.clusters.length ? `, clusters ${entry.clusters.join(', ')}` : ''}` })
+      })
+    : [];
+  return { step: step.id, checksum: compiled.checksum, created, adopted, updated, targeted, distribution: compiled.distribution };
 }
 export async function scenarioStatus(fetcher, env, scenario, controls = {}) {
   const settings = settingsFor(env); const t = tokensFor('scenario', env);

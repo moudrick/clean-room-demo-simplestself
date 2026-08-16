@@ -88,7 +88,13 @@ try {
       for (const [key, version] of Object.entries(step.releaseTags || {})) console.log(`  ${key} tag ${key}-${version}`);
       console.log(`Deployment tuples after this step: ${compiled.deployments.length} of maximum ${scenario.sandbox.limits.maxEvaluatorContainers}`);
       for (const tuple of compiled.deployments) console.log(`  ${tuple.service}/${tuple.environment} ${tuple.traffic}`);
-      console.log('No mutation performed. Targeting is unchanged and every flag stays off.');
+      if (step.targeting?.length) {
+        console.log(`Targeting changes in this step: ${step.targeting.length}`);
+        for (const entry of step.targeting) console.log(`  ${entry.flag} / ${entry.environment}: ${entry.state}, serving ${entry.serve || 'false'}${entry.clusters?.length ? `, clusters ${entry.clusters.join(', ')}` : ''}${entry.exception ? ` (exception: ${entry.exception})` : ''}`);
+      } else console.log('Targeting changes in this step: none');
+      const spread = compiled.distribution;
+      console.log(`Flag distribution after this step — serving true everywhere: ${spread.onEverywhere.length}; true below Production only: ${spread.onBelowProduction.length}; on and rolling out: ${spread.rollingOut.length}; untouched: ${spread.untouched.length}`);
+      console.log('No repository or flag is deleted by this step.');
     } else if (sub === 'apply') {
       if (!target) throw new Error('scenario apply requires --to <step>.');
       const campaign = fs.existsSync('campaign.json') ? JSON.parse(fs.readFileSync('campaign.json', 'utf8')) : null;

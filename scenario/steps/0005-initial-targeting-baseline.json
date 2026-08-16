@@ -1,0 +1,318 @@
+{
+  "schemaVersion": 1,
+  "id": "s005",
+  "title": "Initial targeting: establish the rollout baseline before any cluster rule",
+  "recommendedDate": "2026-08-18",
+  "cadence": "three-day",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "targeting": [
+    {
+      "flag": "demo-cart-v2",
+      "environment": "production",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-cart-v2",
+      "environment": "staging",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-cart-v2",
+      "environment": "test",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-cart-v2",
+      "environment": "dev",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-payment-retry",
+      "environment": "production",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-payment-retry",
+      "environment": "staging",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-payment-retry",
+      "environment": "test",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-payment-retry",
+      "environment": "dev",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-catalog-enrichment",
+      "environment": "production",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-catalog-enrichment",
+      "environment": "staging",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-catalog-enrichment",
+      "environment": "test",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-catalog-enrichment",
+      "environment": "dev",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-order-history-v2",
+      "environment": "production",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-order-history-v2",
+      "environment": "staging",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-order-history-v2",
+      "environment": "test",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-order-history-v2",
+      "environment": "dev",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-pricing-engine-v2",
+      "environment": "production",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-pricing-engine-v2",
+      "environment": "staging",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-pricing-engine-v2",
+      "environment": "test",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-pricing-engine-v2",
+      "environment": "dev",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-shipping-estimates",
+      "environment": "production",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-shipping-estimates",
+      "environment": "staging",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-shipping-estimates",
+      "environment": "test",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-shipping-estimates",
+      "environment": "dev",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-inventory-reservation",
+      "environment": "production",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-inventory-reservation",
+      "environment": "staging",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-inventory-reservation",
+      "environment": "test",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-inventory-reservation",
+      "environment": "dev",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-search-ranking-v3",
+      "environment": "production",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-search-ranking-v3",
+      "environment": "staging",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-personalized-home",
+      "environment": "production",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-personalized-home",
+      "environment": "staging",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-email-notifications-v2",
+      "environment": "production",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-email-notifications-v2",
+      "environment": "staging",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-sms-notifications",
+      "environment": "production",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-sms-notifications",
+      "environment": "staging",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-identity-passkeys",
+      "environment": "production",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-identity-passkeys",
+      "environment": "staging",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-profile-preferences",
+      "environment": "production",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-profile-preferences",
+      "environment": "staging",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-checkout-address-validation",
+      "environment": "production",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-checkout-address-validation",
+      "environment": "staging",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-recommendation-model-v2",
+      "environment": "production",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-recommendation-model-v2",
+      "environment": "staging",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-tax-calculation-v2",
+      "environment": "production",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-tax-calculation-v2",
+      "environment": "staging",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-express-returns",
+      "environment": "production",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-express-returns",
+      "environment": "staging",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-storefront-navigation",
+      "environment": "production",
+      "state": "on",
+      "serve": "false"
+    },
+    {
+      "flag": "demo-storefront-navigation",
+      "environment": "staging",
+      "state": "on",
+      "serve": "false"
+    }
+  ],
+  "notes": [
+    "A rollout reads as a chart where true evaluations rise while false fall. That shape only exists if the flag was already on, serving false by fallthrough, and being evaluated before the first cluster rule lands. A flag switched on the day its rollout starts produces a step, not a crossover, and evaluation history is real elapsed time so it cannot be corrected later. This step is therefore the one that had to happen first.",
+    "Four flags serve true in all four environments: the fully rolled out and still referenced group. Three serve true in Staging, Test and Dev while Production stays on but serving false, which is the prolonged below-Production evaluation pattern; Production is on rather than off so its baseline accumulates ready for a later crossover.",
+    "Eleven flags are on with fallthrough false and no rules in the two critical environments. They have an established baseline and no rollout yet, which is what every later cluster-by-cluster step builds on.",
+    "demo-checkout-rollout and demo-legacy-profile are deliberately absent: they carry cohort, plan and region rules from before the scenario existed and flattening them would destroy the two most interesting targeting examples. demo-retired-banner, demo-subscription-pause, demo-support-assistant and demo-fraud-screening are absent because they stay off all campaign.",
+    "No cluster rules are added here. Rollout begins in the next step and runs asynchronously per flag: fast for the archive candidates, slow through demo day for the open group."
+  ]
+}
