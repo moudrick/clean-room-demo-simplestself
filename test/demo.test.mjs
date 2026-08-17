@@ -614,7 +614,8 @@ test('sandbox limits refuse a connection budget the plan cannot support', () => 
 test('the tracked scenario compiles and satisfies the topology and consumer contract', () => {
   const model = compileScenario(scenarioFiles);
   assert.equal(model.scenarioId, 'campaign-2026-08-16');
-  assert.equal(model.services.length, 7);
+  assert.equal(model.services.length, scenarioFiles.services.services.length, 'every catalog service must be introduced by some step');
+  assert.equal(new Set(scenarioFiles.services.services.map((service) => service.template)).size, 4, 'all four language templates must be represented');
   assert.ok(model.deployments.length <= scenarioFiles.sandbox.limits.maxEvaluatorContainers);
   assert.equal(model.checksum, compileScenario(scenarioFiles).checksum, 'checksum must be stable across compiles');
   const orders = model.services.find((service) => service.key === 'demo-orders');

@@ -3,72 +3,192 @@
   "scenarioId": "campaign-2026-08-16",
   "description": "The 15 synthetic services, their language template, the wave that introduces them, and the flags each consumes at full scenario maturity. Waves exist because GitHub indexing and code history need believable incremental changes rather than one bulk snapshot. Consumer edges are the mature state; a given step introduces only some of them.",
   "waves": {
-    "1": { "recommendedComplete": "2026-08-21", "repositoryCount": 7 },
-    "2": { "recommendedComplete": "2026-08-24", "repositoryCount": 11 },
-    "3": { "recommendedComplete": "2026-08-27", "repositoryCount": 15 }
+    "1": {
+      "recommendedComplete": "2026-08-21",
+      "repositoryCount": 7
+    },
+    "2": {
+      "recommendedComplete": "2026-08-24",
+      "repositoryCount": 11
+    },
+    "3": {
+      "recommendedComplete": "2026-08-27",
+      "repositoryCount": 15
+    }
   },
   "services": [
     {
-      "key": "demo-orders", "template": "nodejs", "wave": 1, "cohort": "pre-campaign",
-      "flags": ["demo-checkout-rollout", "demo-cart-v2", "demo-inventory-reservation", "demo-payment-retry", "demo-email-notifications-v2", "demo-order-history-v2", "demo-express-returns"],
+      "key": "demo-orders",
+      "template": "nodejs",
+      "wave": 1,
+      "cohort": "pre-campaign",
+      "flags": [
+        "demo-checkout-rollout",
+        "demo-cart-v2",
+        "demo-inventory-reservation",
+        "demo-payment-retry",
+        "demo-email-notifications-v2",
+        "demo-order-history-v2",
+        "demo-express-returns"
+      ],
       "note": "Carries the bounded Production load probe. Its history must stay continuous for the whole campaign."
     },
     {
-      "key": "demo-storefront", "template": "nodejs", "wave": 1, "cohort": "pre-campaign",
-      "flags": ["demo-checkout-rollout", "demo-cart-v2", "demo-search-ranking-v3", "demo-personalized-home", "demo-shipping-estimates", "demo-recommendation-model-v2", "demo-storefront-navigation"]
+      "key": "demo-storefront",
+      "template": "nodejs",
+      "wave": 1,
+      "cohort": "pre-campaign",
+      "flags": [
+        "demo-checkout-rollout",
+        "demo-cart-v2",
+        "demo-search-ranking-v3",
+        "demo-personalized-home",
+        "demo-shipping-estimates",
+        "demo-recommendation-model-v2",
+        "demo-storefront-navigation"
+      ]
     },
     {
-      "key": "demo-profile", "template": "nodejs", "wave": 1, "cohort": "pre-campaign",
-      "flags": ["demo-legacy-profile", "demo-identity-passkeys", "demo-order-history-v2", "demo-profile-preferences"],
+      "key": "demo-profile",
+      "template": "nodejs",
+      "wave": 1,
+      "cohort": "pre-campaign",
+      "flags": [
+        "demo-legacy-profile",
+        "demo-identity-passkeys",
+        "demo-order-history-v2",
+        "demo-profile-preferences"
+      ],
       "note": "Holds the dangling-reference case demo-legacy-profile."
     },
     {
-      "key": "demo-catalog", "template": "nodejs", "wave": 1, "cohort": "bootstrap",
-      "flags": ["demo-checkout-rollout", "demo-pricing-engine-v2", "demo-shipping-estimates", "demo-catalog-enrichment"]
+      "key": "demo-catalog",
+      "template": "nodejs",
+      "wave": 1,
+      "cohort": "bootstrap",
+      "flags": [
+        "demo-checkout-rollout",
+        "demo-pricing-engine-v2",
+        "demo-shipping-estimates",
+        "demo-catalog-enrichment"
+      ]
     },
     {
-      "key": "demo-pricing", "template": "nodejs", "wave": 1, "cohort": "bootstrap",
-      "flags": ["demo-pricing-engine-v2", "demo-tax-calculation-v2"]
+      "key": "demo-pricing",
+      "template": "nodejs",
+      "wave": 1,
+      "cohort": "bootstrap",
+      "flags": [
+        "demo-pricing-engine-v2",
+        "demo-tax-calculation-v2"
+      ]
     },
     {
-      "key": "demo-shipping", "template": "nodejs", "wave": 1, "cohort": "bootstrap",
-      "flags": ["demo-shipping-estimates", "demo-checkout-address-validation", "demo-express-returns"]
+      "key": "demo-shipping",
+      "template": "nodejs",
+      "wave": 1,
+      "cohort": "bootstrap",
+      "flags": [
+        "demo-shipping-estimates",
+        "demo-checkout-address-validation",
+        "demo-express-returns"
+      ]
     },
     {
-      "key": "demo-search", "template": "nodejs", "wave": 1, "cohort": "bootstrap",
-      "flags": ["demo-search-ranking-v3", "demo-catalog-enrichment"]
+      "key": "demo-search",
+      "template": "nodejs",
+      "wave": 1,
+      "cohort": "bootstrap",
+      "flags": [
+        "demo-search-ranking-v3",
+        "demo-catalog-enrichment"
+      ]
     },
     {
-      "key": "demo-recommendations", "template": "nodejs", "wave": 2, "cohort": "bootstrap",
-      "flags": ["demo-personalized-home", "demo-recommendation-model-v2"]
+      "key": "demo-recommendations",
+      "template": "nodejs",
+      "wave": 2,
+      "cohort": "bootstrap",
+      "flags": [
+        "demo-personalized-home",
+        "demo-recommendation-model-v2"
+      ]
     },
     {
-      "key": "demo-subscriptions", "template": "nodejs", "wave": 2, "cohort": "bootstrap",
-      "flags": ["demo-subscription-pause"]
+      "key": "demo-subscriptions",
+      "template": "nodejs",
+      "wave": 2,
+      "cohort": "bootstrap",
+      "flags": [
+        "demo-subscription-pause"
+      ],
+      "skipIndexingCheck": true
     },
     {
-      "key": "demo-checkout", "template": "typescript", "wave": 2, "cohort": "bootstrap",
-      "flags": ["demo-checkout-rollout", "demo-cart-v2", "demo-inventory-reservation", "demo-pricing-engine-v2", "demo-checkout-address-validation", "demo-tax-calculation-v2"]
+      "key": "demo-checkout",
+      "template": "typescript",
+      "wave": 2,
+      "cohort": "bootstrap",
+      "flags": [
+        "demo-checkout-rollout",
+        "demo-cart-v2",
+        "demo-inventory-reservation",
+        "demo-pricing-engine-v2",
+        "demo-checkout-address-validation",
+        "demo-tax-calculation-v2"
+      ]
     },
     {
-      "key": "demo-identity", "template": "typescript", "wave": 2, "cohort": "bootstrap",
-      "flags": ["demo-identity-passkeys"]
+      "key": "demo-identity",
+      "template": "typescript",
+      "wave": 2,
+      "cohort": "bootstrap",
+      "flags": [
+        "demo-identity-passkeys"
+      ],
+      "skipIndexingCheck": true
     },
     {
-      "key": "demo-notifications", "template": "typescript", "wave": 3, "cohort": "bootstrap",
-      "flags": ["demo-email-notifications-v2", "demo-sms-notifications", "demo-profile-preferences"]
+      "key": "demo-notifications",
+      "template": "typescript",
+      "wave": 3,
+      "cohort": "bootstrap",
+      "flags": [
+        "demo-email-notifications-v2",
+        "demo-sms-notifications",
+        "demo-profile-preferences"
+      ]
     },
     {
-      "key": "demo-inventory", "template": "go", "wave": 3, "cohort": "bootstrap",
-      "flags": ["demo-inventory-reservation"]
+      "key": "demo-inventory",
+      "template": "go",
+      "wave": 3,
+      "cohort": "bootstrap",
+      "flags": [
+        "demo-inventory-reservation"
+      ]
     },
     {
-      "key": "demo-payments", "template": "go", "wave": 3, "cohort": "bootstrap",
-      "flags": ["demo-checkout-rollout", "demo-payment-retry", "demo-fraud-screening"]
+      "key": "demo-payments",
+      "template": "go",
+      "wave": 3,
+      "cohort": "bootstrap",
+      "flags": [
+        "demo-checkout-rollout",
+        "demo-payment-retry",
+        "demo-fraud-screening"
+      ]
     },
     {
-      "key": "demo-support", "template": "python", "wave": 3, "cohort": "bootstrap",
-      "flags": ["demo-support-assistant"]
+      "key": "demo-support",
+      "template": "python",
+      "wave": 3,
+      "cohort": "bootstrap",
+      "flags": [
+        "demo-support-assistant"
+      ],
+      "skipIndexingCheck": true
     }
-  ]
+  ],
+  "indexingNote": "skipIndexingCheck repositories are never probed by any method. They are the controls in the indexing experiment: the question is whether API activity alone triggers GitHub indexing, or only the web UI does. Their unique flags are either never-started or also carried by an indexed repository, so no archive evidence depends on them."
 }

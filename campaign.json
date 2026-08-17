@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "scenarioId": "campaign-2026-08-16",
   "campaignStart": "2026-08-16T10:09:38.558Z",
-  "capturedAt": "2026-08-16T13:25:46.622Z",
+  "capturedAt": "2026-08-17T19:47:54.590Z",
   "organization": "featureflag-extensiveconsumer-demo-org",
   "project": {
     "key": "featureflag-extensiveconsumer-demo-key",
@@ -16,7 +16,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:16:59.179Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:16:59.179Z"
     },
     {
@@ -25,7 +25,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:13.187Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:13.187Z"
     },
     {
@@ -34,7 +34,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:22.627Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:22.627Z"
     },
     {
@@ -43,7 +43,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-15T21:43:40.964Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-14T21:43:40.964Z"
     },
     {
@@ -52,7 +52,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:01.609Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:01.609Z"
     },
     {
@@ -61,7 +61,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:31.666Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:31.666Z"
     },
     {
@@ -70,7 +70,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:23.151Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:23.151Z"
     },
     {
@@ -79,7 +79,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:12.098Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:12.098Z"
     },
     {
@@ -88,7 +88,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:00.524Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:00.524Z"
     },
     {
@@ -97,7 +97,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-15T21:43:43.350Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-14T21:43:43.350Z"
     },
     {
@@ -106,7 +106,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:21.471Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:21.471Z"
     },
     {
@@ -115,7 +115,7 @@
       "kind": "boolean",
       "temporary": false,
       "createdAt": "2026-08-16T10:17:01.061Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:01.061Z"
     },
     {
@@ -124,7 +124,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:16:59.975Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:16:59.975Z"
     },
     {
@@ -133,7 +133,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:00.804Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:00.804Z"
     },
     {
@@ -142,7 +142,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:22.082Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:22.082Z"
     },
     {
@@ -151,7 +151,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:22.888Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:22.888Z"
     },
     {
@@ -160,7 +160,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-15T21:43:52.708Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-14T21:43:52.708Z"
     },
     {
@@ -169,7 +169,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:16:59.442Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:16:59.442Z"
     },
     {
@@ -178,7 +178,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:01.352Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:01.352Z"
     },
     {
@@ -187,7 +187,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:11.478Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:11.478Z"
     },
     {
@@ -196,7 +196,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:32.219Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:32.219Z"
     },
     {
@@ -205,7 +205,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:12.671Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:12.671Z"
     },
     {
@@ -214,7 +214,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:12.940Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:12.940Z"
     },
     {
@@ -223,7 +223,7 @@
       "kind": "boolean",
       "temporary": true,
       "createdAt": "2026-08-16T10:17:31.050Z",
-      "ageDaysAtCapture": 0,
+      "ageDaysAtCapture": 1,
       "minimumAgeReachedAt": "2026-09-15T10:17:31.050Z"
     }
   ],
@@ -235,8 +235,48 @@
       "createdAt": "2026-08-16T12:32:36Z",
       "defaultBranch": "main",
       "visibility": "public",
-      "headShaAtBaseline": "9d7bd0db9e662fad9fc02d50fdd8dea9178bf4e5",
-      "headCommittedAt": "2026-08-16T13:24:09Z"
+      "headShaAtBaseline": "26f15441fb0b56f42aa6fae708ec441cb19120a3",
+      "headCommittedAt": "2026-08-16T18:10:26Z"
+    },
+    {
+      "name": "demo-checkout",
+      "id": 1337588255,
+      "nodeId": "R_kgDOT7n6Hw",
+      "createdAt": "2026-08-17T19:46:40Z",
+      "defaultBranch": "main",
+      "visibility": "public",
+      "headShaAtBaseline": "8239f5e2a0d7c679fadd8485820254bea2cbd830",
+      "headCommittedAt": "2026-08-17T19:46:46Z"
+    },
+    {
+      "name": "demo-identity",
+      "id": 1337588434,
+      "nodeId": "R_kgDOT7n60g",
+      "createdAt": "2026-08-17T19:46:49Z",
+      "defaultBranch": "main",
+      "visibility": "public",
+      "headShaAtBaseline": "3fe4e225090ca188c35e0e5aec366c8cfbd1027b",
+      "headCommittedAt": "2026-08-17T19:46:56Z"
+    },
+    {
+      "name": "demo-inventory",
+      "id": 1337588773,
+      "nodeId": "R_kgDOT7n8JQ",
+      "createdAt": "2026-08-17T19:47:09Z",
+      "defaultBranch": "main",
+      "visibility": "public",
+      "headShaAtBaseline": "d302e3f2190df214de2ffc71e7d5ae57a1923997",
+      "headCommittedAt": "2026-08-17T19:47:16Z"
+    },
+    {
+      "name": "demo-notifications",
+      "id": 1337588604,
+      "nodeId": "R_kgDOT7n7fA",
+      "createdAt": "2026-08-17T19:46:59Z",
+      "defaultBranch": "main",
+      "visibility": "public",
+      "headShaAtBaseline": "e0f923139481182c230d71fe4a6b948fdfc8495e",
+      "headCommittedAt": "2026-08-17T19:47:06Z"
     },
     {
       "name": "demo-orders",
@@ -245,8 +285,18 @@
       "createdAt": "2026-08-15T21:46:25Z",
       "defaultBranch": "main",
       "visibility": "public",
-      "headShaAtBaseline": "1523f59f25297c8d5692a36ce49bc0093bdde820",
-      "headCommittedAt": "2026-08-15T21:46:30Z"
+      "headShaAtBaseline": "eb95614b70830b791af299bf43e6c8d59410fe48",
+      "headCommittedAt": "2026-08-17T18:48:26Z"
+    },
+    {
+      "name": "demo-payments",
+      "id": 1337588949,
+      "nodeId": "R_kgDOT7n81Q",
+      "createdAt": "2026-08-17T19:47:19Z",
+      "defaultBranch": "main",
+      "visibility": "public",
+      "headShaAtBaseline": "5935ac97cbfbbdafa9d6e380229b1b15bb99b037",
+      "headCommittedAt": "2026-08-17T19:47:25Z"
     },
     {
       "name": "demo-pricing",
@@ -255,8 +305,8 @@
       "createdAt": "2026-08-16T12:32:44Z",
       "defaultBranch": "main",
       "visibility": "public",
-      "headShaAtBaseline": "3c103a331bbee0c214a782b98ce791243d05c204",
-      "headCommittedAt": "2026-08-16T13:24:16Z"
+      "headShaAtBaseline": "c92fd5347b1734e681c91ff7df47b740062595e9",
+      "headCommittedAt": "2026-08-16T18:10:37Z"
     },
     {
       "name": "demo-profile",
@@ -265,8 +315,18 @@
       "createdAt": "2026-08-15T21:46:39Z",
       "defaultBranch": "main",
       "visibility": "public",
-      "headShaAtBaseline": "7175f785b1ad20147783d007ed5bba0074436a19",
-      "headCommittedAt": "2020-01-02T03:04:05Z"
+      "headShaAtBaseline": "d02fb9310d9278832bb5da81242d864af75fb271",
+      "headCommittedAt": "2026-08-17T18:50:20Z"
+    },
+    {
+      "name": "demo-recommendations",
+      "id": 1337587915,
+      "nodeId": "R_kgDOT7n4yw",
+      "createdAt": "2026-08-17T19:46:19Z",
+      "defaultBranch": "main",
+      "visibility": "public",
+      "headShaAtBaseline": "b220f03ef826a43e0083978bbf47d793b7e471df",
+      "headCommittedAt": "2026-08-17T19:46:27Z"
     },
     {
       "name": "demo-search",
@@ -275,8 +335,8 @@
       "createdAt": "2026-08-16T12:33:02Z",
       "defaultBranch": "main",
       "visibility": "public",
-      "headShaAtBaseline": "2f5d7acafdaf1ce024afce339ad93f2fe5ef202f",
-      "headCommittedAt": "2026-08-16T13:24:28Z"
+      "headShaAtBaseline": "828f5c50ce8f02e44ca94d7bbe6bf605aca45cb9",
+      "headCommittedAt": "2026-08-16T18:10:58Z"
     },
     {
       "name": "demo-shipping",
@@ -285,8 +345,8 @@
       "createdAt": "2026-08-16T12:32:53Z",
       "defaultBranch": "main",
       "visibility": "public",
-      "headShaAtBaseline": "69e9c43860fce95bc1aff4987d1fa483645a94f0",
-      "headCommittedAt": "2026-08-16T13:24:21Z"
+      "headShaAtBaseline": "db37a4a2f0eb1b83616c5aef10385b57cdbae2cd",
+      "headCommittedAt": "2026-08-16T18:10:48Z"
     },
     {
       "name": "demo-storefront",
@@ -295,8 +355,28 @@
       "createdAt": "2026-08-15T21:46:32Z",
       "defaultBranch": "main",
       "visibility": "public",
-      "headShaAtBaseline": "a5a5f750b23cbd7ab8a13aa6a6d7e4e2d98999d5",
-      "headCommittedAt": "2026-08-15T21:46:37Z"
+      "headShaAtBaseline": "a253334d8aa0ed76b9ed96803df6439ddba19007",
+      "headCommittedAt": "2026-08-17T18:50:07Z"
+    },
+    {
+      "name": "demo-subscriptions",
+      "id": 1337588089,
+      "nodeId": "R_kgDOT7n5eQ",
+      "createdAt": "2026-08-17T19:46:30Z",
+      "defaultBranch": "main",
+      "visibility": "public",
+      "headShaAtBaseline": "4a48470b31655c3fb70db5c66430325f19b925c2",
+      "headCommittedAt": "2026-08-17T19:46:37Z"
+    },
+    {
+      "name": "demo-support",
+      "id": 1337589077,
+      "nodeId": "R_kgDOT7n9VQ",
+      "createdAt": "2026-08-17T19:47:28Z",
+      "defaultBranch": "main",
+      "visibility": "public",
+      "headShaAtBaseline": "2f13438bf0ab78e47bbce75cbaef9e322769cee7",
+      "headCommittedAt": "2026-08-17T19:47:34Z"
     }
   ]
 }

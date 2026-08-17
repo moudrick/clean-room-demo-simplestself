@@ -1664,7 +1664,7 @@ export async function reconcileStep(fetcher, env, scenario, targetId, controls =
       adopted.push({ service: key, repositoryId: existing.id ?? null, nodeId: existing.node_id ?? null });
     } else {
       const references = (step.sourceReferences || {})[key] || [];
-      const source = catalogSource(key, references, compiled.scenarioId, service.template, (step.releaseTags || {})[key] || "v001", clusterTopologyFor(scenario.sandbox.environments));
+      const source = catalogSource(key, references, compiled.scenarioId, service.template, (step.releaseTags || {})[key] || "v001", clusterTopologyFor(scenario.sandbox.environments), settings.org);
       const result = await commitInitialSource(fetcher, t.GH_RESET_TOKEN, settings, key, source, requestControls);
       const version = (step.releaseTags || {})[key];
       const tag = version ? `${key}-${version}` : null;
@@ -1697,7 +1697,7 @@ export async function reconcileStep(fetcher, env, scenario, targetId, controls =
     if (already) {
       updated.push({ service: key, tag, commitSha: already.object?.sha ?? null, alreadyApplied: true });
     } else {
-      const source = catalogSource(key, references, compiled.scenarioId, service.template, version, clusterTopologyFor(scenario.sandbox.environments));
+      const source = catalogSource(key, references, compiled.scenarioId, service.template, version, clusterTopologyFor(scenario.sandbox.environments), settings.org);
       const title = `${step.id}: advance ${key} to ${version}`;
       const body = [
         step.title || '',

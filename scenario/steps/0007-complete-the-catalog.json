@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "id": "s007",
+  "title": "Complete the catalog: eight remaining services across TypeScript, Go and Python",
+  "recommendedDate": "2026-08-18",
+  "cadence": "three-day",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "introduceServices": [
+    "demo-recommendations",
+    "demo-subscriptions",
+    "demo-checkout",
+    "demo-identity",
+    "demo-notifications",
+    "demo-inventory",
+    "demo-payments",
+    "demo-support"
+  ],
+  "sourceReferences": {
+    "demo-recommendations": [
+      "demo-personalized-home",
+      "demo-recommendation-model-v2"
+    ],
+    "demo-subscriptions": [
+      "demo-subscription-pause"
+    ],
+    "demo-checkout": [
+      "demo-cart-v2",
+      "demo-checkout-address-validation",
+      "demo-checkout-rollout",
+      "demo-inventory-reservation",
+      "demo-pricing-engine-v2",
+      "demo-tax-calculation-v2"
+    ],
+    "demo-identity": [
+      "demo-identity-passkeys"
+    ],
+    "demo-notifications": [
+      "demo-email-notifications-v2",
+      "demo-profile-preferences",
+      "demo-sms-notifications"
+    ],
+    "demo-inventory": [
+      "demo-inventory-reservation"
+    ],
+    "demo-payments": [
+      "demo-checkout-rollout",
+      "demo-fraud-screening",
+      "demo-payment-retry"
+    ],
+    "demo-support": [
+      "demo-support-assistant"
+    ]
+  },
+  "releaseTags": {
+    "demo-recommendations": "v001",
+    "demo-subscriptions": "v001",
+    "demo-checkout": "v001",
+    "demo-identity": "v001",
+    "demo-notifications": "v001",
+    "demo-inventory": "v001",
+    "demo-payments": "v001",
+    "demo-support": "v001"
+  },
+  "deploy": [
+    {
+      "service": "demo-orders",
+      "environment": "production",
+      "traffic": "paced-probe"
+    },
+    {
+      "service": "demo-orders",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-storefront",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-storefront",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-profile",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-profile",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-catalog",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-catalog",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-pricing",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-pricing",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-shipping",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-shipping",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-search",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-search",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-orders",
+      "environment": "test",
+      "traffic": "periodic"
+    },
+    {
+      "service": "demo-orders",
+      "environment": "dev",
+      "traffic": "rare"
+    }
+  ],
+  "targeting": [],
+  "notes": [
+    "Brings the estate to fifteen services and all four languages. Every template embeds its flag keys literally, carries the release, reproduces the same cluster weighting and business-hours batch sizing, and ships a Dockerfile. All three new templates were built and run against the live project in Dev before any repository was created.",
+    "Deployment is unchanged in this step. Creating the repositories starts the GitHub indexing clock, which is the slow resource; wiring the new services into the evaluator set is a separate step so a container problem cannot delay indexing.",
+    "demo-subscriptions, demo-identity and demo-support carry skipIndexingCheck: the tooling will never probe them by any method. They are the controls for the indexing experiment. Their unique flags are either never-started or also carried by an indexed repository, so no archive evidence depends on them.",
+    "demo-sms-notifications finally gains a consumer here through demo-notifications, the TypeScript service. It was the one flag that would have accumulated nothing had TypeScript stayed source-only."
+  ]
+}
