@@ -739,6 +739,7 @@ export async function baseline(fetcher, env, controls = {}) {
     flags, repositories
   };
 }
+export const BATCH_DUTY_DIVISOR = 50;
 export const CATALOG_MAX_FLAGS = 45;
 export const PRESENTATION_ROLES = {
   'not-started': 3, 'partial-rollout': 6, 'rolled-out-still-referenced': 5, 'cleanup-draining': 4,
@@ -849,12 +850,14 @@ export function assertSandbox(sandbox) {
     }
   });
   const limits = sandbox.limits || {};
-  for (const [key, min, max] of [['maxRepositories', 1, 20], ['maxFlags', 1, CATALOG_MAX_FLAGS], ['maxEvaluatorContainers', 1, 12], ['maxAverageServiceConnections', 1, 5], ['sustainedConnectionServices', 0, 5]]) {
+  for (const [key, min, max] of [['maxRepositories', 1, 20], ['maxFlags', 1, CATALOG_MAX_FLAGS], ['maxEvaluatorContainers', 1, 40], ['maxAverageServiceConnections', 1, 5], ['sustainedConnectionServices', 0, 5]]) {
     if (!Number.isInteger(limits[key]) || limits[key] < min || limits[key] > max) throw new Error(`sandbox.json limit ${key} must be an integer between ${min} and ${max}.`);
   }
-  // Only sustained connections cost a full average connection each; batch evaluators
-  // hold one for seconds per cycle and are budgeted at well under a tenth.
-  const projected = limits.sustainedConnectionServices + Math.ceil(limits.maxEvaluatorContainers / 10);
+  // Only sustained connections cost a full average connection each. Batch evaluators hold one
+  // for roughly 800ms per 300s cycle, measured live — a 0.27% duty cycle. BATCH_DUTY_DIVISOR is
+  // set to 50 (2%), still seven times more pessimistic than observed, so the guard protects the
+  // budget without blocking coverage the plan can comfortably afford.
+  const projected = limits.sustainedConnectionServices + Math.ceil(limits.maxEvaluatorContainers / BATCH_DUTY_DIVISOR);
   if (projected > limits.maxAverageServiceConnections) throw new Error(`Projected average service connections (${projected}) exceed the plan ceiling of ${limits.maxAverageServiceConnections}. Reduce sustained connections or evaluator containers.`);
   const cadence = sandbox.cadence || {};
   if (!Array.isArray(cadence.dailyTransitions) || !Array.isArray(cadence.dailyWindows)) throw new Error('sandbox.json must define cadence.dailyTransitions and cadence.dailyWindows.');
@@ -1016,6 +1019,56 @@ export function targetingDistribution(targetingList, catalog, sandbox) {
 export function scenarioChecksum(model) {
   return crypto.createHash('sha256').update(JSON.stringify(model)).digest('hex').slice(0, 16);
 }
+// Per-language container shape. Every template runs the same batch: connect, evaluate every flag
+// the release owns, flush, close. Only the entrypoint differs.
+export const TEMPLATE_RUNTIME = {
+  nodejs: { command: ['npm', 'run', 'traffic', '--', '--profile'] },
+  typescript: { command: ['npm', 'run', 'traffic', '--', '--profile'] },
+  go: { command: ['/app/evaluator', '--traffic', '--profile'] },
+  python: { command: ['python', '-u', 'app.py', '--traffic', '--profile'] }
+};
+export function composeServiceName(serviceKey, environment) {
+  return `${serviceKey.replace(/^demo-/, '')}-${environment}`;
+}
+export function generateCompose(model, services, sandbox) {
+  const byKey = new Map(services.services.map((service) => [service.key, service]));
+  const deployed = [...new Set(model.deployments.map((tuple) => tuple.service))].sort();
+  const cap = sandbox.limits.maxEvaluatorContainers;
+  if (model.deployments.length > cap) throw new Error(`Compose would declare ${model.deployments.length} evaluators, exceeding the cap of ${cap}.`);
+  const lines = [
+    '# Generated from the compiled scenario. Do not edit by hand; change scenario/steps and reapply.',
+    'x-runtime-environment: &runtime-environment',
+    '  DEMO_GENERATION_ID: ${DEMO_GENERATION_ID:?missing demo generation}',
+    '',
+    'x-rotated-logs: &rotated-logs',
+    '  driver: json-file',
+    '  options:',
+    '    max-size: 10m',
+    '    max-file: "3"',
+    ''
+  ];
+  for (const key of deployed) {
+    const service = byKey.get(key);
+    if (!service) throw new Error(`Compose generation found no catalog entry for ${key}.`);
+    lines.push(`x-${key.replace(/^demo-/, '')}: &${key.replace(/^demo-/, '')}`, `  build: ./repos/${key}`, `  image: clean-room-demo/${key}:local`,
+      '  init: true', '  restart: unless-stopped', '  stop_grace_period: 30s', '  logging: *rotated-logs', '');
+  }
+  lines.push('services:');
+  const order = sandbox.environments.map((environment) => environment.key);
+  const sorted = [...model.deployments].sort((a, b) => order.indexOf(a.environment) - order.indexOf(b.environment) || a.service.localeCompare(b.service));
+  for (const tuple of sorted) {
+    const service = byKey.get(tuple.service);
+    const runtime = TEMPLATE_RUNTIME[service.template];
+    if (!runtime) throw new Error(`No container runtime defined for template ${service.template}.`);
+    const probe = sandbox.trafficPatterns?.[tuple.traffic]?.kind === 'paced';
+    lines.push(`  ${composeServiceName(tuple.service, tuple.environment)}:`, `    <<: *${tuple.service.replace(/^demo-/, '')}`, '    environment:', '      <<: *runtime-environment',
+      `      LD_EVALUATION_SDK_KEY: \${LD_EVALUATION_SDK_KEY_${tuple.environment.toUpperCase()}:?missing ${tuple.environment} SDK key}`,
+      `      DEMO_ENVIRONMENT: ${tuple.environment}`);
+    if (probe) lines.push('      DEMO_EVALUATIONS_PER_HOUR: ${DEMO_EVALUATIONS_PER_HOUR:-1200}', '      DEMO_CONTEXT_POOL_SIZE: ${DEMO_CONTEXT_POOL_SIZE:-1000}');
+    lines.push(`    command: [${[...runtime.command, tuple.environment].map((part) => `"${part}"`).join(', ')}]`);
+  }
+  return `${lines.join('\n')}\n`;
+}
 export function loadScenario(root = process.cwd(), fileSystem = fs) {
   const directory = path.join(root, 'scenario');
   const read = (name) => JSON.parse(fileSystem.readFileSync(path.join(directory, name), 'utf8'));
@@ -1100,14 +1153,32 @@ async function mergeSourceViaPullRequest(fetcher, token, settings, name, source,
   const who = { name: 'Synthetic Demo', email: 'synthetic-demo@example.invalid', date: new Date().toISOString() };
   const commit = await gh(fetcher, `/repos/${settings.org}/${name}/git/commits`, token, { method: 'POST', body: JSON.stringify({ message: title, tree: tree.sha, parents: [parentSha], author: who, committer: who }) }, controls);
   await gh(fetcher, `/repos/${settings.org}/${name}/git/refs/heads/${branch}`, token, { method: 'PATCH', body: JSON.stringify({ sha: commit.sha, force: false }) }, controls);
-  const pull = await gh(fetcher, `/repos/${settings.org}/${name}/pulls`, token, { method: 'POST', body: JSON.stringify({ title, body, head: branch, base: 'main' }) }, controls);
-  if (!Number.isInteger(pull?.number)) throw new Error(`Opening a pull request on ${name} did not return a pull number.`);
-  let merged;
+  let pull;
   try {
-    merged = await gh(fetcher, `/repos/${settings.org}/${name}/pulls/${pull.number}/merge`, token, { method: 'PUT', body: JSON.stringify({ merge_method: 'squash', commit_title: title }) }, controls);
+    pull = await gh(fetcher, `/repos/${settings.org}/${name}/pulls`, token, { method: 'POST', body: JSON.stringify({ title, body, head: branch, base: 'main' }) }, controls);
   } catch (error) {
-    throw new Error(`Squash-merging ${name}#${pull.number} failed: ${error.message}. The step stops here; it never falls back to committing directly to main.`);
+    // An interrupted run can leave a pull request already open for this head; adopt it.
+    if (!/\(422\)/.test(error.message)) throw error;
+    const open = await gh(fetcher, `/repos/${settings.org}/${name}/pulls?head=${encodeURIComponent(`${settings.org}:${branch}`)}&state=open`, token, undefined, controls);
+    pull = Array.isArray(open) ? open[0] : null;
+    if (!pull) throw error;
   }
+  if (!Number.isInteger(pull?.number)) throw new Error(`Opening a pull request on ${name} did not return a pull number.`);
+  let merged; let mergeError;
+  // "Base branch was modified" is GitHub reporting its own view of main as momentarily stale right
+  // after the branch was created. It resolves on its own, so retry briefly rather than failing the step.
+  const sleep = controls.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      merged = await gh(fetcher, `/repos/${settings.org}/${name}/pulls/${pull.number}/merge`, token, { method: 'PUT', body: JSON.stringify({ merge_method: 'squash', commit_title: title }) }, controls);
+      mergeError = undefined; break;
+    } catch (error) {
+      mergeError = error;
+      if (!/Base branch was modified|\(405\)|\(409\)/.test(error.message) || attempt === 3) break;
+      await sleep(controls.mergeRetryMs ?? 3000);
+    }
+  }
+  if (mergeError) throw new Error(`Squash-merging ${name}#${pull.number} failed: ${mergeError.message}. The step stops here; it never falls back to committing directly to main.`);
   if (!merged?.merged || !merged.sha) throw new Error(`Pull request ${name}#${pull.number} did not report a completed squash merge.`);
   await gh(fetcher, `/repos/${settings.org}/${name}/git/refs/heads/${branch}`, token, { method: 'DELETE' }, controls);
   return { commitSha: merged.sha, parentSha, pullNumber: pull.number };

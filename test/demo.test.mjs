@@ -272,7 +272,8 @@ test('runtime preparation removes partial artifacts when a clone fails', async (
 });
 test('Compose covers every repository/environment pair without evaluating the retired flag', () => {
   const compose = fs.readFileSync(new URL('../runtime/compose.yaml', import.meta.url), 'utf8');
-  const declared = [...compose.matchAll(/^ {2}([a-z0-9-]+):$/gm)].map((match) => match[1]).sort();
+  const block = compose.slice(compose.indexOf('\nservices:\n'));
+  const declared = [...block.matchAll(/^ {2}([a-z0-9-]+):$/gm)].map((match) => match[1]).sort();
   const model = compileScenario(scenarioFiles);
   const expected = model.deployments.map((tuple) => `${tuple.service.replace(/^demo-/, '')}-${tuple.environment}`).sort();
   assert.deepEqual(declared, expected, 'Compose must declare exactly the deployment tuples the active step selects');
@@ -617,7 +618,10 @@ test('the tracked scenario compiles and satisfies the topology and consumer cont
   assert.ok(model.deployments.length <= scenarioFiles.sandbox.limits.maxEvaluatorContainers);
   assert.equal(model.checksum, compileScenario(scenarioFiles).checksum, 'checksum must be stable across compiles');
   const orders = model.services.find((service) => service.key === 'demo-orders');
-  assert.deepEqual(orders.references, ['demo-checkout-rollout'], 'pre-campaign source references are seeded, not invented');
+  const declared = scenarioFiles.services.services.find((service) => service.key === 'demo-orders').flags;
+  assert.deepEqual(orders.references, [...declared].sort(), 'every declared consumer must appear in generated source once the reference gap is closed');
+  const referenced = new Set(model.services.flatMap((service) => service.references));
+  assert.ok(referenced.size >= 19, `at least 19 flags need a deployed caller; found ${referenced.size}`);
 });
 test('sandbox validation enforces environment order, criticality, and bounds', () => {
   const clone = () => JSON.parse(JSON.stringify(scenarioFiles.sandbox));
@@ -626,7 +630,7 @@ test('sandbox validation enforces environment order, criticality, and bounds', (
   assert.throws(() => assertSandbox(reordered), /environment order/);
   const uncritical = clone(); uncritical.environments[0].critical = false;
   assert.throws(() => assertSandbox(uncritical), /must declare critical true/);
-  const overCap = clone(); overCap.limits.maxEvaluatorContainers = 40;
+  const overCap = clone(); overCap.limits.maxEvaluatorContainers = 41;
   assert.throws(() => assertSandbox(overCap), /maxEvaluatorContainers/);
 });
 test('service validation enforces catalog membership and consumer spread', () => {
@@ -650,8 +654,8 @@ test('the compiler is forward-only and refuses contract violations', () => {
   const inWindow = base(); inWindow.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: '2026-09-11', cadence: 'daily' });
   assert.doesNotThrow(() => compileScenario(inWindow), 'the screenshot window permits daily cadence');
   const overCap = base();
-  overCap.steps[0].deploy.push({ service: 'demo-profile', environment: 'test', traffic: 'rare' });
-  assert.throws(() => compileScenario(overCap), /exceeding the cap of 12/);
+  overCap.sandbox.limits.maxEvaluatorContainers = 4;
+  assert.throws(() => compileScenario(overCap), /exceeding the cap of 4/);
   const undeclared = base(); undeclared.steps[0].sourceReferences['demo-search'] = ['demo-fraud-screening'];
   assert.throws(() => compileScenario(undeclared), /does not declare it as a consumer/);
   const gap = base(); gap.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: '2026-08-19', cadence: 'three-day', minGapDaysFromPrevious: 3 });

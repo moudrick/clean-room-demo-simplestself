@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "id": "s006",
+  "title": "Close the reference gap: pre-campaign services consume every flag they declare",
+  "recommendedDate": "2026-08-18",
+  "cadence": "three-day",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "updateServices": [
+    "demo-orders",
+    "demo-storefront",
+    "demo-profile"
+  ],
+  "sourceReferences": {
+    "demo-orders": [
+      "demo-cart-v2",
+      "demo-checkout-rollout",
+      "demo-email-notifications-v2",
+      "demo-express-returns",
+      "demo-inventory-reservation",
+      "demo-order-history-v2",
+      "demo-payment-retry"
+    ],
+    "demo-storefront": [
+      "demo-cart-v2",
+      "demo-checkout-rollout",
+      "demo-personalized-home",
+      "demo-recommendation-model-v2",
+      "demo-search-ranking-v3",
+      "demo-shipping-estimates",
+      "demo-storefront-navigation"
+    ],
+    "demo-profile": [
+      "demo-identity-passkeys",
+      "demo-legacy-profile",
+      "demo-order-history-v2",
+      "demo-profile-preferences"
+    ]
+  },
+  "releaseTags": {
+    "demo-orders": "v002",
+    "demo-storefront": "v002",
+    "demo-profile": "v002"
+  },
+  "deploy": [
+    {
+      "service": "demo-orders",
+      "environment": "production",
+      "traffic": "paced-probe"
+    },
+    {
+      "service": "demo-orders",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-storefront",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-storefront",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-profile",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-profile",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-catalog",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-catalog",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-pricing",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-pricing",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-shipping",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-shipping",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-search",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-search",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-orders",
+      "environment": "test",
+      "traffic": "periodic"
+    },
+    {
+      "service": "demo-orders",
+      "environment": "dev",
+      "traffic": "rare"
+    }
+  ],
+  "targeting": [],
+  "notes": [
+    "demo-orders, demo-storefront and demo-profile were created before the scenario existed and their source was seeded with a single flag each. services.json declares demo-orders as consuming seven flags; its source referenced one. Seventeen flags therefore had targeting configured and were being evaluated zero times.",
+    "Widening source is what starts their evaluation history. Targeting without a caller accumulates nothing, and evaluation history is real elapsed time, so every hour a flag spends unreferenced is baseline that cannot be recovered.",
+    "Deployment widens from 12 to 16 evaluators: all seven Node services on both critical environments, plus demo-orders retaining Test and Dev for its bounded probe. Connections are no longer the constraint — measured duty cycle is 0.27 per cent, so sixteen batch evaluators cost far less than one sustained connection.",
+    "Expected effect: flags with a deployed caller rise from 7 to 19. The five without one are demo-retired-banner and the three never-started flags, all deliberately silent, plus demo-sms-notifications whose only consumer is the TypeScript service that does not exist yet."
+  ]
+}

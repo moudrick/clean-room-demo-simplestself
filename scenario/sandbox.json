@@ -38,7 +38,7 @@
   "limits": {
     "maxRepositories": 20,
     "maxFlags": 45,
-    "maxEvaluatorContainers": 12,
+    "maxEvaluatorContainers": 32,
     "maxAverageServiceConnections": 5,
     "sustainedConnectionServices": 1,
     "minEvaluationsPerHour": 10,
