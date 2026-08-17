@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "s009",
+  "title": "Go and Python report application metadata",
+  "recommendedDate": "2026-08-18",
+  "cadence": "three-day",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "updateServices": [
+    "demo-inventory",
+    "demo-payments",
+    "demo-support"
+  ],
+  "releaseTags": {
+    "demo-inventory": "v002",
+    "demo-payments": "v002",
+    "demo-support": "v002"
+  },
+  "targeting": [],
+  "notes": [
+    "Node and TypeScript already sent LaunchDarkly application metadata carrying the release; Go and Python did not, so they reported no deployed version. Closing it keeps deployed-version evidence consistent across all four languages, which matters because the talk distinguishes a flag removed from current source from one still evaluated by an older deployed tag.",
+    "Go sets ApplicationInfo on the client config; Python passes application id and version to Config. Both rebuilt and re-run against the live project in Dev before this step was written."
+  ]
+}

@@ -593,6 +593,7 @@ import (
 \t"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
 \t"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 \tld "github.com/launchdarkly/go-server-sdk/v7"
+\t"github.com/launchdarkly/go-server-sdk/v7/interfaces"
 )
 
 const repository = "${repository}"
@@ -719,7 +720,8 @@ func main() {
 \t\tdefault:
 \t\t}
 \t\topenedAt := time.Now()
-\t\tclient, err := ld.MakeCustomClient(sdkKey, ld.Config{}, 10*time.Second)
+\t\tconfig := ld.Config{ApplicationInfo: interfaces.ApplicationInfo{ApplicationID: repository, ApplicationVersion: release}}
+\t\tclient, err := ld.MakeCustomClient(sdkKey, config, 10*time.Second)
 \t\tif err != nil {
 \t\t\tfmt.Fprintln(os.Stderr, "Error: evaluator failed.")
 \t\t\tos.Exit(1)
@@ -864,7 +866,7 @@ def main():
     index = 0
     while not stop_requested:
         opened_at = time.time()
-        ldclient.set_config(Config(sdk_key))
+        ldclient.set_config(Config(sdk_key, application={"id": REPOSITORY, "version": RELEASE}))
         client = ldclient.get()
         count = batch_size(environment, datetime.now(timezone.utc))
         per_flag = {flag: {"true": 0, "false": 0} for flag in FLAGS}
