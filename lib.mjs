@@ -319,7 +319,7 @@ async function main() {
   const connect = () => LaunchDarkly.init(sdkKey, {
     capacity: 10000, flushInterval: 5, enableEventCompression: true,
     contextKeysCapacity: Math.min(options.contextPoolSize, 10000), contextKeysFlushInterval: 300, logger,
-    application: { id: repository, name: repository + ' synthetic evaluator', version: release, versionName: probe ? 'production-load-probe' : 'standard-traffic' }
+    application: { id: repository, name: repository, version: release, versionName: probe ? 'production-load-probe' : 'standard-traffic' }
   });
   const stop = () => { stopRequested = true; if (wake) wake(); };
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
@@ -456,6 +456,453 @@ function repositoryFiles(repository, flags, release = 'v001', topology = DEFAULT
     { path: 'Dockerfile', content: "FROM node:24-alpine\nENV NPM_CONFIG_UPDATE_NOTIFIER=false\nWORKDIR /app\nCOPY package.json ./\nRUN npm install --omit=dev\nCOPY app.mjs traffic.mjs ./\nUSER node\nCMD [\"npm\", \"run\", \"traffic\"]\n" },
     { path: '.gitignore', content: 'node_modules/\n.env\n' },
     { path: 'README.md', content: `# ${repository} synthetic evaluator\n\nRun \`npm install\`, set \`LD_EVALUATION_SDK_KEY\`, then use \`npm run evaluate -- --cohort checkout-beta --cluster prod-eu-west-01\` for a ten-evaluation one-shot batch or \`npm run traffic -- --profile production\` for cumulative traffic. One-shot count can be changed with \`--evaluations\`; \`--cluster\` selects a fixed synthetic cluster. Only demo-orders Production accepts \`--evaluations-per-hour 10..100000\` and \`--context-pool-size 1..10000\`. Stop traffic with Ctrl+C so pending events flush.\n` }
+  ];
+}
+const PROFILE_TABLE = {
+  production: { enterprise: 10, beta: 15, legacy: 8, busy: 100, quiet: 40 },
+  staging: { enterprise: 20, beta: 30, legacy: 20, busy: 30, quiet: 12 },
+  test: { enterprise: 30, beta: 35, legacy: 30, busy: 10, quiet: 4 },
+  dev: { enterprise: 15, beta: 25, legacy: 12, busy: 2, quiet: 1 }
+};
+const KNOWN_OFFSETS = { 'demo-orders': 11, 'demo-storefront': 43, 'demo-profile': 71 };
+// Every template reproduces the same cluster weighting, context shape and batch sizing as Node.
+// The shape must match exactly or LaunchDarkly sees inconsistent contexts across languages.
+function typescriptFiles(repository, flags, release, topology) {
+  const app = `import * as LaunchDarkly from '@launchdarkly/node-server-sdk';
+import { batchSize, contextForTraffic, type Multi } from './traffic.ts';
+
+const repository = '${repository}';
+const release = '${release}';
+const flags: string[] = ${JSON.stringify(flags)};
+
+let stopRequested = false;
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const profile = (() => {
+  const index = process.argv.indexOf('--profile');
+  const value = index > 0 ? process.argv[index + 1] : process.env.DEMO_ENVIRONMENT;
+  if (!value || !['production', 'staging', 'test', 'dev'].includes(value)) throw new Error('A valid --profile is required.');
+  return value;
+})();
+
+async function batch(client: LaunchDarkly.LDClient, firstIndex: number, openedAt: number): Promise<number> {
+  const count = batchSize(profile, new Date());
+  const perFlag: Record<string, { true: number; false: number }> = {};
+  const clusters: Record<string, number> = {};
+  for (const flag of flags) perFlag[flag] = { true: 0, false: 0 };
+  let attempted = 0;
+  for (let item = 0; item < count && !stopRequested; item += 1) {
+    const context: Multi = contextForTraffic(repository, profile, firstIndex + item, process.env.DEMO_GENERATION_ID || 'untracked');
+    for (const flag of flags) {
+      const value = await client.boolVariation(flag, context as never, false);
+      perFlag[flag][value ? 'true' : 'false'] += 1;
+      attempted += 1;
+    }
+    clusters[context.cluster.key] = (clusters[context.cluster.key] || 0) + 1;
+  }
+  let flush = 'ok';
+  try { await client.flush(); } catch { flush = 'failed'; }
+  console.log(JSON.stringify({ type: 'traffic-batch', repository, release, flags, perFlag, profile, generation: process.env.DEMO_GENERATION_ID || 'untracked', contexts: count, attempted, clusters, flush, connectionMs: Date.now() - openedAt }));
+  if (flush !== 'ok') throw new Error('SDK flush failed.');
+  return count;
+}
+
+async function main(): Promise<void> {
+  const sdkKey = process.env.LD_EVALUATION_SDK_KEY;
+  if (!sdkKey) throw new Error('LD_EVALUATION_SDK_KEY is required.');
+  const stop = () => { stopRequested = true; };
+  process.once('SIGINT', stop); process.once('SIGTERM', stop);
+  let index = 0;
+  while (!stopRequested) {
+    const openedAt = Date.now();
+    const client = LaunchDarkly.init(sdkKey, {
+      capacity: 10000, flushInterval: 5,
+      application: { id: repository, name: repository, version: release }
+    });
+    try {
+      await client.waitForInitialization({ timeout: 10 });
+      index += await batch(client, index, openedAt);
+    } finally { await client.close(); }
+    if (!stopRequested) await wait(300000);
+  }
+}
+
+main().catch((error: unknown) => { console.error('Error: evaluator failed.', error instanceof Error ? error.message : ''); process.exitCode = 1; });
+`;
+  const traffic = `export type Cluster = { key: string; name: string; environment: string; region: string; ordinal: number; releaseRing: string; weight: number };
+export type Multi = { kind: 'multi'; user: Record<string, string>; service: { key: string; name: string }; cluster: Cluster & { generation: string } };
+
+const profiles: Record<string, { enterprise: number; beta: number; legacy: number; busy: number; quiet: number }> = ${JSON.stringify(PROFILE_TABLE, null, 2)};
+export const clusters: Record<string, Cluster[]> = ${JSON.stringify(topology, null, 2)};
+const offsets: Record<string, number> = ${JSON.stringify(KNOWN_OFFSETS)};
+
+function offsetFor(repository: string): number {
+  if (Object.hasOwn(offsets, repository)) return offsets[repository];
+  let hash = 7;
+  for (let index = 0; index < repository.length; index += 1) hash = (hash * 31 + repository.charCodeAt(index)) % 100;
+  return hash;
+}
+
+export function batchSize(profile: string, at: Date): number {
+  const settings = profiles[profile];
+  if (!settings) throw new Error('Invalid traffic schedule input.');
+  const day = at.getUTCDay(); const hour = at.getUTCHours();
+  return day >= 1 && day <= 5 && hour >= 7 && hour < 19 ? settings.busy : settings.quiet;
+}
+
+export function clusterFor(repository: string, profile: string, index: number): Cluster {
+  const choices = clusters[profile];
+  if (!choices) throw new Error('Invalid cluster input.');
+  const bucket = (index * 17 + offsetFor(repository)) % 100;
+  let boundary = 0;
+  const selected = choices.find((item) => { boundary += item.weight; return bucket < boundary; });
+  if (!selected) throw new Error('Invalid cluster configuration.');
+  return selected;
+}
+
+export function contextForTraffic(repository: string, profile: string, index: number, generation: string): Multi {
+  const settings = profiles[profile];
+  if (!settings) throw new Error('Invalid traffic input.');
+  const bucket = (index * 37 + offsetFor(repository)) % 100;
+  const user: Record<string, string> = { key: [repository, profile, index % 1000].join('-'), plan: 'free', region: 'eu', cohort: 'control' };
+  if (bucket < settings.enterprise) user.plan = 'enterprise';
+  else if (bucket < settings.enterprise + settings.beta) user.cohort = 'checkout-beta';
+  return { kind: 'multi', user, service: { key: repository, name: repository }, cluster: { ...clusterFor(repository, profile, index), generation } };
+}
+`;
+  return [
+    { path: 'package.json', content: `${JSON.stringify({ name: repository, private: true, type: 'module', scripts: { traffic: 'node app.ts', typecheck: 'tsc --noEmit' }, dependencies: { '@launchdarkly/node-server-sdk': '^9.0.0' }, devDependencies: { typescript: '^5.6.0', '@types/node': '^24.0.0' } }, null, 2)}\n` },
+    { path: 'tsconfig.json', content: `${JSON.stringify({ compilerOptions: { target: 'ES2023', module: 'nodenext', moduleResolution: 'nodenext', strict: true, noEmit: true, allowImportingTsExtensions: true, types: ['node'] }, include: ['*.ts'] }, null, 2)}\n` },
+    { path: 'app.ts', content: app },
+    { path: 'traffic.ts', content: traffic },
+    { path: 'Dockerfile', content: 'FROM node:24-alpine\nENV NPM_CONFIG_UPDATE_NOTIFIER=false\nWORKDIR /app\nCOPY package.json ./\nRUN npm install --omit=dev\nCOPY app.ts traffic.ts ./\nUSER node\nCMD ["node", "app.ts"]\n' },
+    { path: '.gitignore', content: 'node_modules/\n.env\n' },
+    { path: 'README.md', content: `# ${repository} synthetic evaluator (TypeScript)\n\nTypeScript source run directly by Node's native type stripping, so there is no build step. Set \`LD_EVALUATION_SDK_KEY\` and \`DEMO_ENVIRONMENT\`, then \`npm run traffic -- --profile staging\`. \`npm run typecheck\` runs \`tsc --noEmit\`.\n` }
+  ];
+}
+function goFiles(repository, flags, release, topology, org) {
+  const main = `package main
+
+import (
+\t"encoding/json"
+\t"fmt"
+\t"os"
+\t"os/signal"
+\t"syscall"
+\t"time"
+
+\t"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
+\t"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
+\tld "github.com/launchdarkly/go-server-sdk/v7"
+)
+
+const repository = "${repository}"
+const release = "${release}"
+
+var flags = []string{${flags.map((flag) => `"${flag}"`).join(', ')}}
+
+const topologyJSON = \`${JSON.stringify(topology)}\`
+const profilesJSON = \`${JSON.stringify(PROFILE_TABLE)}\`
+const offsetsJSON = \`${JSON.stringify(KNOWN_OFFSETS)}\`
+
+type cluster struct {
+\tKey         string \`json:"key"\`
+\tName        string \`json:"name"\`
+\tEnvironment string \`json:"environment"\`
+\tRegion      string \`json:"region"\`
+\tOrdinal     int    \`json:"ordinal"\`
+\tReleaseRing string \`json:"releaseRing"\`
+\tWeight      int    \`json:"weight"\`
+}
+
+type profile struct {
+\tEnterprise int \`json:"enterprise"\`
+\tBeta       int \`json:"beta"\`
+\tLegacy     int \`json:"legacy"\`
+\tBusy       int \`json:"busy"\`
+\tQuiet      int \`json:"quiet"\`
+}
+
+var clusters map[string][]cluster
+var profiles map[string]profile
+var offsets map[string]int
+
+func offsetFor(name string) int {
+\tif value, ok := offsets[name]; ok {
+\t\treturn value
+\t}
+\thash := 7
+\tfor _, char := range name {
+\t\thash = (hash*31 + int(char)) % 100
+\t}
+\treturn hash
+}
+
+func batchSize(name string, at time.Time) int {
+\tsettings := profiles[name]
+\tday := int(at.UTC().Weekday())
+\thour := at.UTC().Hour()
+\tif day >= 1 && day <= 5 && hour >= 7 && hour < 19 {
+\t\treturn settings.Busy
+\t}
+\treturn settings.Quiet
+}
+
+func clusterFor(name string, env string, index int) cluster {
+\tchoices := clusters[env]
+\tbucket := (index*17 + offsetFor(name)) % 100
+\tboundary := 0
+\tfor _, item := range choices {
+\t\tboundary += item.Weight
+\t\tif bucket < boundary {
+\t\t\treturn item
+\t\t}
+\t}
+\treturn choices[len(choices)-1]
+}
+
+func contextForTraffic(name string, env string, index int, generation string) ldcontext.Context {
+\tsettings := profiles[env]
+\tbucket := (index*37 + offsetFor(name)) % 100
+\tplan, region, cohort := "free", "eu", "control"
+\tif bucket < settings.Enterprise {
+\t\tplan = "enterprise"
+\t} else if bucket < settings.Enterprise+settings.Beta {
+\t\tcohort = "checkout-beta"
+\t}
+\tuser := ldcontext.NewBuilder(fmt.Sprintf("%s-%s-%d", name, env, index%1000)).Kind("user").
+\t\tSetString("plan", plan).SetString("region", region).SetString("cohort", cohort).Build()
+\tselected := clusterFor(name, env, index)
+\tservice := ldcontext.NewBuilder(name).Kind("service").SetString("name", name).Build()
+\tclusterContext := ldcontext.NewBuilder(selected.Key).Kind("cluster").
+\t\tSetString("name", selected.Name).SetString("environment", selected.Environment).
+\t\tSetString("region", selected.Region).SetValue("ordinal", ldvalue.Int(selected.Ordinal)).
+\t\tSetString("releaseRing", selected.ReleaseRing).SetString("generation", generation).Build()
+\treturn ldcontext.NewMulti(user, service, clusterContext)
+}
+
+func main() {
+\tif err := json.Unmarshal([]byte(topologyJSON), &clusters); err != nil {
+\t\tpanic(err)
+\t}
+\tif err := json.Unmarshal([]byte(profilesJSON), &profiles); err != nil {
+\t\tpanic(err)
+\t}
+\tif err := json.Unmarshal([]byte(offsetsJSON), &offsets); err != nil {
+\t\tpanic(err)
+\t}
+\tsdkKey := os.Getenv("LD_EVALUATION_SDK_KEY")
+\tif sdkKey == "" {
+\t\tfmt.Fprintln(os.Stderr, "LD_EVALUATION_SDK_KEY is required.")
+\t\tos.Exit(1)
+\t}
+\tenv := os.Getenv("DEMO_ENVIRONMENT")
+\tfor position, argument := range os.Args {
+\t\tif argument == "--profile" && position+1 < len(os.Args) {
+\t\t\tenv = os.Args[position+1]
+\t\t}
+\t}
+\tif _, ok := profiles[env]; !ok {
+\t\tfmt.Fprintln(os.Stderr, "A valid --profile is required.")
+\t\tos.Exit(1)
+\t}
+\tgeneration := os.Getenv("DEMO_GENERATION_ID")
+\tif generation == "" {
+\t\tgeneration = "untracked"
+\t}
+\tstop := make(chan os.Signal, 1)
+\tsignal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+\tindex := 0
+\tfor {
+\t\tselect {
+\t\tcase <-stop:
+\t\t\treturn
+\t\tdefault:
+\t\t}
+\t\topenedAt := time.Now()
+\t\tclient, err := ld.MakeCustomClient(sdkKey, ld.Config{}, 10*time.Second)
+\t\tif err != nil {
+\t\t\tfmt.Fprintln(os.Stderr, "Error: evaluator failed.")
+\t\t\tos.Exit(1)
+\t\t}
+\t\tcount := batchSize(env, time.Now())
+\t\tperFlag := map[string]map[string]int{}
+\t\tclusterCounts := map[string]int{}
+\t\tfor _, flag := range flags {
+\t\t\tperFlag[flag] = map[string]int{"true": 0, "false": 0}
+\t\t}
+\t\tattempted := 0
+\t\tfor item := 0; item < count; item++ {
+\t\t\tevaluationContext := contextForTraffic(repository, env, index+item, generation)
+\t\t\tfor _, flag := range flags {
+\t\t\t\tvalue, _ := client.BoolVariation(flag, evaluationContext, false)
+\t\t\t\tif value {
+\t\t\t\t\tperFlag[flag]["true"]++
+\t\t\t\t} else {
+\t\t\t\t\tperFlag[flag]["false"]++
+\t\t\t\t}
+\t\t\t\tattempted++
+\t\t\t}
+\t\t\tclusterCounts[clusterFor(repository, env, index+item).Key]++
+\t\t}
+\t\tflush := "ok"
+\t\tif !client.FlushAndWait(5 * time.Second) {
+\t\t\tflush = "failed"
+\t\t}
+\t\tsummary := map[string]interface{}{
+\t\t\t"type": "traffic-batch", "repository": repository, "release": release,
+\t\t\t"flags": flags, "perFlag": perFlag, "profile": env, "generation": generation,
+\t\t\t"contexts": count, "attempted": attempted, "clusters": clusterCounts,
+\t\t\t"flush": flush, "connectionMs": time.Since(openedAt).Milliseconds(),
+\t\t}
+\t\tline, _ := json.Marshal(summary)
+\t\tfmt.Println(string(line))
+\t\tclient.Close()
+\t\tindex += count
+\t\tselect {
+\t\tcase <-stop:
+\t\t\treturn
+\t\tcase <-time.After(300 * time.Second):
+\t\t}
+\t}
+}
+`;
+  return [
+    { path: 'go.mod', content: `module github.com/${org}/${repository}\n\ngo 1.23\n\nrequire (\n\tgithub.com/launchdarkly/go-sdk-common/v3 v3.1.0\n\tgithub.com/launchdarkly/go-server-sdk/v7 v7.6.1\n)\n` },
+    { path: 'main.go', content: main },
+    { path: 'Dockerfile', content: 'FROM golang:1.23-alpine AS build\nWORKDIR /src\nCOPY go.mod ./\nCOPY main.go ./\nRUN go mod tidy && CGO_ENABLED=0 go build -o /out/evaluator .\n\nFROM alpine:3.20\nRUN adduser -D -u 10001 evaluator\nCOPY --from=build /out/evaluator /app/evaluator\nUSER evaluator\nENTRYPOINT ["/app/evaluator"]\n' },
+    { path: '.gitignore', content: 'evaluator\n.env\n' },
+    { path: 'README.md', content: `# ${repository} synthetic evaluator (Go)\n\nSet \`LD_EVALUATION_SDK_KEY\` and \`DEMO_ENVIRONMENT\`, then \`go run . --profile staging\`. Each batch opens a client, evaluates every flag the release owns, flushes and closes.\n` }
+  ];
+}
+function pythonFiles(repository, flags, release, topology) {
+  const app = `import json
+import os
+import signal
+import sys
+import time
+from datetime import datetime, timezone
+
+import ldclient
+from ldclient.config import Config
+from ldclient.context import Context
+
+REPOSITORY = "${repository}"
+RELEASE = "${release}"
+FLAGS = [${flags.map((flag) => `"${flag}"`).join(', ')}]
+
+CLUSTERS = json.loads(r'''${JSON.stringify(topology)}''')
+PROFILES = json.loads(r'''${JSON.stringify(PROFILE_TABLE)}''')
+OFFSETS = json.loads(r'''${JSON.stringify(KNOWN_OFFSETS)}''')
+
+stop_requested = False
+
+
+def request_stop(_signum, _frame):
+    global stop_requested
+    stop_requested = True
+
+
+def offset_for(name):
+    if name in OFFSETS:
+        return OFFSETS[name]
+    value = 7
+    for char in name:
+        value = (value * 31 + ord(char)) % 100
+    return value
+
+
+def batch_size(profile, at):
+    settings = PROFILES[profile]
+    business = at.weekday() <= 4 and 7 <= at.hour < 19
+    return settings["busy"] if business else settings["quiet"]
+
+
+def cluster_for(name, environment, index):
+    choices = CLUSTERS[environment]
+    bucket = (index * 17 + offset_for(name)) % 100
+    boundary = 0
+    for item in choices:
+        boundary += item["weight"]
+        if bucket < boundary:
+            return item
+    return choices[-1]
+
+
+def context_for_traffic(name, environment, index, generation):
+    settings = PROFILES[environment]
+    bucket = (index * 37 + offset_for(name)) % 100
+    plan, region, cohort = "free", "eu", "control"
+    if bucket < settings["enterprise"]:
+        plan = "enterprise"
+    elif bucket < settings["enterprise"] + settings["beta"]:
+        cohort = "checkout-beta"
+    user = (Context.builder("%s-%s-%d" % (name, environment, index % 1000)).kind("user")
+            .set("plan", plan).set("region", region).set("cohort", cohort).build())
+    selected = cluster_for(name, environment, index)
+    service = Context.builder(name).kind("service").set("name", name).build()
+    cluster = (Context.builder(selected["key"]).kind("cluster")
+               .set("name", selected["name"]).set("environment", selected["environment"])
+               .set("region", selected["region"]).set("ordinal", selected["ordinal"])
+               .set("releaseRing", selected["releaseRing"]).set("generation", generation).build())
+    return Context.create_multi(user, service, cluster)
+
+
+def main():
+    sdk_key = os.environ.get("LD_EVALUATION_SDK_KEY")
+    if not sdk_key:
+        print("LD_EVALUATION_SDK_KEY is required.", file=sys.stderr)
+        sys.exit(1)
+    environment = os.environ.get("DEMO_ENVIRONMENT")
+    if "--profile" in sys.argv:
+        environment = sys.argv[sys.argv.index("--profile") + 1]
+    if environment not in PROFILES:
+        print("A valid --profile is required.", file=sys.stderr)
+        sys.exit(1)
+    generation = os.environ.get("DEMO_GENERATION_ID", "untracked")
+    signal.signal(signal.SIGINT, request_stop)
+    signal.signal(signal.SIGTERM, request_stop)
+    index = 0
+    while not stop_requested:
+        opened_at = time.time()
+        ldclient.set_config(Config(sdk_key))
+        client = ldclient.get()
+        count = batch_size(environment, datetime.now(timezone.utc))
+        per_flag = {flag: {"true": 0, "false": 0} for flag in FLAGS}
+        clusters = {}
+        attempted = 0
+        for item in range(count):
+            context = context_for_traffic(REPOSITORY, environment, index + item, generation)
+            for flag in FLAGS:
+                value = client.variation(flag, context, False)
+                per_flag[flag]["true" if value else "false"] += 1
+                attempted += 1
+            key = cluster_for(REPOSITORY, environment, index + item)["key"]
+            clusters[key] = clusters.get(key, 0) + 1
+        client.flush()
+        print(json.dumps({
+            "type": "traffic-batch", "repository": REPOSITORY, "release": RELEASE,
+            "flags": FLAGS, "perFlag": per_flag, "profile": environment,
+            "generation": generation, "contexts": count, "attempted": attempted,
+            "clusters": clusters, "flush": "ok",
+            "connectionMs": int((time.time() - opened_at) * 1000),
+        }), flush=True)
+        client.close()
+        index += count
+        for _ in range(300):
+            if stop_requested:
+                break
+            time.sleep(1)
+
+
+if __name__ == "__main__":
+    main()
+`;
+  return [
+    { path: 'requirements.txt', content: 'launchdarkly-server-sdk==9.8.0\n' },
+    { path: 'app.py', content: app },
+    { path: 'Dockerfile', content: 'FROM python:3.12-slim\nWORKDIR /app\nCOPY requirements.txt ./\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY app.py ./\nRUN useradd -u 10001 -m evaluator\nUSER evaluator\nCMD ["python", "-u", "app.py"]\n' },
+    { path: '.gitignore', content: '__pycache__/\n.env\n' },
+    { path: 'README.md', content: `# ${repository} synthetic evaluator (Python)\n\nSet \`LD_EVALUATION_SDK_KEY\` and \`DEMO_ENVIRONMENT\`, then \`python app.py --profile staging\`. Each batch opens a client, evaluates every flag the release owns, flushes and closes.\n` }
   ];
 }
 export const SOURCES = {
@@ -1109,9 +1556,15 @@ export async function applyTargeting(fetcher, token, settings, entries, controls
   return applied;
 }
 export const OWNERSHIP_MARKER = '.scenario-owner.json';
-export function catalogSource(serviceKey, flags, scenarioId, template = 'nodejs', release = 'v001', topology = DEFAULT_CLUSTER_TOPOLOGY) {
-  if (template !== 'nodejs') throw new Error(`Source template "${template}" is not implemented yet. Wave 1 is Node.js only; TypeScript, Go, and Python arrive with Waves 2 and 3.`);
-  const files = repositoryFiles(serviceKey, flags, release, topology);
+export function catalogSource(serviceKey, flags, scenarioId, template = 'nodejs', release = 'v001', topology = DEFAULT_CLUSTER_TOPOLOGY, org = 'demo-org') {
+  const builders = {
+    nodejs: () => repositoryFiles(serviceKey, flags, release, topology),
+    typescript: () => typescriptFiles(serviceKey, flags, release, topology),
+    go: () => goFiles(serviceKey, flags, release, topology, org),
+    python: () => pythonFiles(serviceKey, flags, release, topology)
+  };
+  if (!builders[template]) throw new Error(`Source template "${template}" is not implemented.`);
+  const files = builders[template]();
   files.push({ path: OWNERSHIP_MARKER, content: `${JSON.stringify({ scenarioId, service: serviceKey, template, release }, null, 2)}\n` });
   return { files, date: null };
 }

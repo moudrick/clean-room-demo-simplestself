@@ -778,7 +778,34 @@ test('generated catalog source carries the ownership marker and literal flag key
   const outsideProbe = app.replace(probe, '');
   assert.equal(outsideProbe.includes('flags[0]'), false, 'only the bounded rate probe may single out one flag');
   assert.ok(probe.includes('flags[0]'), 'the rate probe stays deliberately single-flag so its evaluations-per-hour figure keeps meaning');
-  assert.throws(() => catalogSource('demo-payments', [], 'campaign-2026-08-16', 'go'), /not implemented yet/);
+  assert.throws(() => catalogSource('demo-payments', [], 'campaign-2026-08-16', 'rust'), /not implemented/);
+});
+test('every language template carries literal flag keys, the release, and a Dockerfile', () => {
+  const keys = ['demo-payment-retry', 'demo-fraud-screening'];
+  const expectations = {
+    nodejs: { entry: 'app.mjs', marker: /const flags = \[/ },
+    typescript: { entry: 'app.ts', marker: /const flags: string\[\] = \[/ },
+    go: { entry: 'main.go', marker: /var flags = \[\]string\{/ },
+    python: { entry: 'app.py', marker: /^FLAGS = \[/m }
+  };
+  for (const [template, { entry, marker }] of Object.entries(expectations)) {
+    const files = catalogSource('demo-payments', keys, 'campaign-2026-08-16', template, 'v007').files;
+    const source = files.find((file) => file.path === entry);
+    assert.ok(source, `${template} must generate ${entry}`);
+    assert.match(source.content, marker, `${template} must declare its flag list literally`);
+    for (const key of keys) assert.ok(source.content.includes(key), `${template} source must contain the literal key ${key}`);
+    assert.ok(source.content.includes('v007'), `${template} must embed the release so deployed version is reportable`);
+    assert.ok(files.some((file) => file.path === 'Dockerfile'), `${template} must ship a Dockerfile`);
+    assert.ok(files.some((file) => file.path === OWNERSHIP_MARKER), `${template} must carry the ownership marker`);
+  }
+  // Every template must reproduce the same cluster weighting, or languages disagree on distribution.
+  const topology = clusterTopologyFor(scenarioFiles.sandbox.environments);
+  for (const template of ['typescript', 'go', 'python']) {
+    const files = catalogSource('demo-payments', keys, 'campaign-2026-08-16', template, 'v001', topology).files;
+    const all = files.map((file) => file.content).join('\n');
+    assert.ok(all.includes('prod-eu-west-02'), `${template} must embed the full cluster topology`);
+    assert.match(all, /17|37/, `${template} must reproduce the deterministic bucket arithmetic`);
+  }
 });
 test('campaign lock leaves read-only audit unaffected', async () => {
   const fetcher = async (url) => ({ ok: true, status: 200, url: String(url), headers: {}, json: async () => ({ items: [], total_count: 0 }) });
