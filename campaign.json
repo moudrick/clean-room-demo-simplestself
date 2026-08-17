@@ -378,5 +378,211 @@
       "headShaAtBaseline": "3005954914fa01c66d19be7a6a40faa4811b6161",
       "headCommittedAt": "2026-08-17T20:06:54Z"
     }
-  ]
+  ],
+  "indexing": {
+    "probedAt": "2026-08-17T21:40:30.717Z",
+    "attempts": 3,
+    "searches": 36,
+    "repositories": [
+      {
+        "name": "demo-catalog",
+        "skipped": false,
+        "state": "INDEXING",
+        "firstPushAt": null,
+        "indexRequestedAt": "2026-08-17T21:36:11.532Z",
+        "firstIndexedAt": null,
+        "probes": 3,
+        "totalCount": 0,
+        "query": "import repo:featureflag-extensiveconsumer-demo-org/demo-catalog"
+      },
+      {
+        "name": "demo-checkout",
+        "skipped": false,
+        "state": "INDEXING",
+        "firstPushAt": "2026-08-17T19:46:48.924Z",
+        "indexRequestedAt": "2026-08-17T21:36:17.532Z",
+        "firstIndexedAt": null,
+        "probes": 3,
+        "totalCount": 0,
+        "query": "import repo:featureflag-extensiveconsumer-demo-org/demo-checkout"
+      },
+      {
+        "name": "demo-identity",
+        "skipped": true,
+        "state": "skipped (deliberate)",
+        "firstPushAt": "2026-08-17T19:46:58.739Z",
+        "indexRequestedAt": null,
+        "firstIndexedAt": null,
+        "probes": 0,
+        "totalCount": null,
+        "query": null
+      },
+      {
+        "name": "demo-inventory",
+        "skipped": false,
+        "state": "INDEXING",
+        "firstPushAt": "2026-08-17T19:47:18.822Z",
+        "indexRequestedAt": "2026-08-17T21:36:23.533Z",
+        "firstIndexedAt": null,
+        "probes": 3,
+        "totalCount": 0,
+        "query": "import repo:featureflag-extensiveconsumer-demo-org/demo-inventory"
+      },
+      {
+        "name": "demo-notifications",
+        "skipped": false,
+        "state": "INDEXING",
+        "firstPushAt": "2026-08-17T19:47:08.823Z",
+        "indexRequestedAt": "2026-08-17T21:36:29.538Z",
+        "firstIndexedAt": null,
+        "probes": 3,
+        "totalCount": 0,
+        "query": "import repo:featureflag-extensiveconsumer-demo-org/demo-notifications"
+      },
+      {
+        "name": "demo-orders",
+        "skipped": false,
+        "state": "INDEXING",
+        "firstPushAt": null,
+        "indexRequestedAt": "2026-08-17T21:36:35.539Z",
+        "firstIndexedAt": null,
+        "probes": 3,
+        "totalCount": 0,
+        "query": "import repo:featureflag-extensiveconsumer-demo-org/demo-orders"
+      },
+      {
+        "name": "demo-payments",
+        "skipped": false,
+        "state": "INDEXING",
+        "firstPushAt": "2026-08-17T19:47:27.756Z",
+        "indexRequestedAt": "2026-08-17T21:36:41.546Z",
+        "firstIndexedAt": null,
+        "probes": 3,
+        "totalCount": 0,
+        "query": "import repo:featureflag-extensiveconsumer-demo-org/demo-payments"
+      },
+      {
+        "name": "demo-pricing",
+        "skipped": false,
+        "state": "INDEXING",
+        "firstPushAt": null,
+        "indexRequestedAt": "2026-08-17T21:36:47.550Z",
+        "firstIndexedAt": null,
+        "probes": 3,
+        "totalCount": 0,
+        "query": "import repo:featureflag-extensiveconsumer-demo-org/demo-pricing"
+      },
+      {
+        "name": "demo-profile",
+        "skipped": false,
+        "state": "INDEXING",
+        "firstPushAt": null,
+        "indexRequestedAt": "2026-08-17T21:36:53.551Z",
+        "firstIndexedAt": null,
+        "probes": 3,
+        "totalCount": 0,
+        "query": "import repo:featureflag-extensiveconsumer-demo-org/demo-profile"
+      },
+      {
+        "name": "demo-recommendations",
+        "skipped": false,
+        "state": "INDEXING",
+        "firstPushAt": "2026-08-17T19:46:29.950Z",
+        "indexRequestedAt": "2026-08-17T21:36:59.562Z",
+        "firstIndexedAt": null,
+        "probes": 3,
+        "totalCount": 0,
+        "query": "import repo:featureflag-extensiveconsumer-demo-org/demo-recommendations"
+      },
+      {
+        "name": "demo-search",
+        "skipped": false,
+        "state": "INDEXING",
+        "firstPushAt": null,
+        "indexRequestedAt": "2026-08-17T21:37:05.564Z",
+        "firstIndexedAt": null,
+        "probes": 3,
+        "totalCount": 0,
+        "query": "import repo:featureflag-extensiveconsumer-demo-org/demo-search"
+      },
+      {
+        "name": "demo-shipping",
+        "skipped": false,
+        "state": "INDEXING",
+        "firstPushAt": null,
+        "indexRequestedAt": "2026-08-17T21:37:11.571Z",
+        "firstIndexedAt": null,
+        "probes": 3,
+        "totalCount": 0,
+        "query": "import repo:featureflag-extensiveconsumer-demo-org/demo-shipping"
+      },
+      {
+        "name": "demo-storefront",
+        "skipped": false,
+        "state": "INDEXING",
+        "firstPushAt": null,
+        "indexRequestedAt": "2026-08-17T21:37:17.580Z",
+        "firstIndexedAt": null,
+        "probes": 3,
+        "totalCount": 0,
+        "query": "import repo:featureflag-extensiveconsumer-demo-org/demo-storefront"
+      },
+      {
+        "name": "demo-subscriptions",
+        "skipped": true,
+        "state": "skipped (deliberate)",
+        "firstPushAt": "2026-08-17T19:46:39.161Z",
+        "indexRequestedAt": null,
+        "firstIndexedAt": null,
+        "probes": 0,
+        "totalCount": null,
+        "query": null
+      },
+      {
+        "name": "demo-support",
+        "skipped": true,
+        "state": "skipped (deliberate)",
+        "firstPushAt": "2026-08-17T19:47:36.623Z",
+        "indexRequestedAt": null,
+        "firstIndexedAt": null,
+        "probes": 0,
+        "totalCount": null,
+        "query": null
+      }
+    ],
+    "manualActions": [
+      "MANUAL ACTION REQUIRED: featureflag-extensiveconsumer-demo-org/demo-catalog is still absent from the code index after 3 probe(s). Open https://github.com/search?type=code&q=import%20repo%3Afeatureflag-extensiveconsumer-demo-org%2Fdemo-catalog and run this query in the GitHub web UI: import repo:featureflag-extensiveconsumer-demo-org/demo-catalog",
+      "MANUAL ACTION REQUIRED: featureflag-extensiveconsumer-demo-org/demo-checkout is still absent from the code index after 3 probe(s). Open https://github.com/search?type=code&q=import%20repo%3Afeatureflag-extensiveconsumer-demo-org%2Fdemo-checkout and run this query in the GitHub web UI: import repo:featureflag-extensiveconsumer-demo-org/demo-checkout",
+      "MANUAL ACTION REQUIRED: featureflag-extensiveconsumer-demo-org/demo-inventory is still absent from the code index after 3 probe(s). Open https://github.com/search?type=code&q=import%20repo%3Afeatureflag-extensiveconsumer-demo-org%2Fdemo-inventory and run this query in the GitHub web UI: import repo:featureflag-extensiveconsumer-demo-org/demo-inventory",
+      "MANUAL ACTION REQUIRED: featureflag-extensiveconsumer-demo-org/demo-notifications is still absent from the code index after 3 probe(s). Open https://github.com/search?type=code&q=import%20repo%3Afeatureflag-extensiveconsumer-demo-org%2Fdemo-notifications and run this query in the GitHub web UI: import repo:featureflag-extensiveconsumer-demo-org/demo-notifications",
+      "MANUAL ACTION REQUIRED: featureflag-extensiveconsumer-demo-org/demo-orders is still absent from the code index after 3 probe(s). Open https://github.com/search?type=code&q=import%20repo%3Afeatureflag-extensiveconsumer-demo-org%2Fdemo-orders and run this query in the GitHub web UI: import repo:featureflag-extensiveconsumer-demo-org/demo-orders",
+      "MANUAL ACTION REQUIRED: featureflag-extensiveconsumer-demo-org/demo-payments is still absent from the code index after 3 probe(s). Open https://github.com/search?type=code&q=import%20repo%3Afeatureflag-extensiveconsumer-demo-org%2Fdemo-payments and run this query in the GitHub web UI: import repo:featureflag-extensiveconsumer-demo-org/demo-payments",
+      "MANUAL ACTION REQUIRED: featureflag-extensiveconsumer-demo-org/demo-pricing is still absent from the code index after 3 probe(s). Open https://github.com/search?type=code&q=import%20repo%3Afeatureflag-extensiveconsumer-demo-org%2Fdemo-pricing and run this query in the GitHub web UI: import repo:featureflag-extensiveconsumer-demo-org/demo-pricing",
+      "MANUAL ACTION REQUIRED: featureflag-extensiveconsumer-demo-org/demo-profile is still absent from the code index after 3 probe(s). Open https://github.com/search?type=code&q=import%20repo%3Afeatureflag-extensiveconsumer-demo-org%2Fdemo-profile and run this query in the GitHub web UI: import repo:featureflag-extensiveconsumer-demo-org/demo-profile",
+      "MANUAL ACTION REQUIRED: featureflag-extensiveconsumer-demo-org/demo-recommendations is still absent from the code index after 3 probe(s). Open https://github.com/search?type=code&q=import%20repo%3Afeatureflag-extensiveconsumer-demo-org%2Fdemo-recommendations and run this query in the GitHub web UI: import repo:featureflag-extensiveconsumer-demo-org/demo-recommendations",
+      "MANUAL ACTION REQUIRED: featureflag-extensiveconsumer-demo-org/demo-search is still absent from the code index after 3 probe(s). Open https://github.com/search?type=code&q=import%20repo%3Afeatureflag-extensiveconsumer-demo-org%2Fdemo-search and run this query in the GitHub web UI: import repo:featureflag-extensiveconsumer-demo-org/demo-search",
+      "MANUAL ACTION REQUIRED: featureflag-extensiveconsumer-demo-org/demo-shipping is still absent from the code index after 3 probe(s). Open https://github.com/search?type=code&q=import%20repo%3Afeatureflag-extensiveconsumer-demo-org%2Fdemo-shipping and run this query in the GitHub web UI: import repo:featureflag-extensiveconsumer-demo-org/demo-shipping",
+      "MANUAL ACTION REQUIRED: featureflag-extensiveconsumer-demo-org/demo-storefront is still absent from the code index after 3 probe(s). Open https://github.com/search?type=code&q=import%20repo%3Afeatureflag-extensiveconsumer-demo-org%2Fdemo-storefront and run this query in the GitHub web UI: import repo:featureflag-extensiveconsumer-demo-org/demo-storefront"
+    ],
+    "indexed": [],
+    "unresolved": [
+      "demo-catalog",
+      "demo-checkout",
+      "demo-inventory",
+      "demo-notifications",
+      "demo-orders",
+      "demo-payments",
+      "demo-pricing",
+      "demo-profile",
+      "demo-recommendations",
+      "demo-search",
+      "demo-shipping",
+      "demo-storefront"
+    ],
+    "skipped": [
+      "demo-identity",
+      "demo-subscriptions",
+      "demo-support"
+    ]
+  }
 }
