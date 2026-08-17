@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "id": "s010",
+  "title": "First cluster rules: canary the archive candidates, start the slow group",
+  "recommendedDate": "2026-08-18",
+  "cadence": "daily",
+  "transition": "production-canary",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "targeting": [
+    {
+      "flag": "demo-email-notifications-v2",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02"
+      ]
+    },
+    {
+      "flag": "demo-email-notifications-v2",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02"
+      ]
+    },
+    {
+      "flag": "demo-tax-calculation-v2",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02"
+      ]
+    },
+    {
+      "flag": "demo-tax-calculation-v2",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02"
+      ]
+    },
+    {
+      "flag": "demo-identity-passkeys",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02"
+      ]
+    },
+    {
+      "flag": "demo-recommendation-model-v2",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02"
+      ]
+    },
+    {
+      "flag": "demo-checkout-address-validation",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02"
+      ]
+    }
+  ],
+  "notes": [
+    "The crossover begins here. Every flag below has been on with fallthrough false and evaluated since 16 August, so the true line now rises against a false line that already exists rather than appearing from nothing.",
+    "demo-email-notifications-v2 and demo-tax-calculation-v2 are the earliest track: they must complete rollout by 22-24 August so seven days of targeting stability can pass before code removal, then evaluations reach zero, then a seven-day silence window completes. They take the Staging and Production canaries together today and advance daily.",
+    "The three open-track flags take only the Staging canary and will crawl one cluster every day or two, so they are still visibly mid-crossover on 5 October. That is the whole point of the open track: something unfinished to show live.",
+    "Production canary is prod-eu-west-02 at five per cent of population, the smallest cluster. Rolling out least-populated first makes the curve accelerate rather than step evenly: 5, 15, 30, 60, 100 per cent."
+  ]
+}
