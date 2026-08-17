@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE, loadScenario, compileScenario, assertSandbox, assertServices, reconcileStep, catalogSource, OWNERSHIP_MARKER, clusterTopologyFor, targetingInstructions } from '../lib.mjs';
+import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE, loadScenario, compileScenario, assertSandbox, assertServices, reconcileStep, catalogSource, OWNERSHIP_MARKER, clusterTopologyFor, targetingInstructions, warmRepositoryIndex, probeRepositoryIndex } from '../lib.mjs';
 const catalogFile = JSON.parse(fs.readFileSync(new URL('../scenario/flags.json', import.meta.url), 'utf8'));
 
 const env = { GH_ORG: 'example-demo-org', LD_PROJECT_KEY: 'example-demo-project', GH_RESET_TOKEN: 'gh-reset-secret', GH_DEMO_TOKEN: 'gh-demo-secret', LD_RESET_TOKEN: 'ld-reset-secret', LD_DEMO_TOKEN: 'ld-demo-secret' };
@@ -610,6 +610,40 @@ test('sandbox limits refuse a connection budget the plan cannot support', () => 
   assert.throws(() => assertSandbox(greedy), /exceed the plan ceiling/);
   const overCeiling = clone(); overCeiling.limits.maxAverageServiceConnections = 9;
   assert.throws(() => assertSandbox(overCeiling), /maxAverageServiceConnections/);
+});
+test('index warming never issues a request naming a skipIndexingCheck repository', async () => {
+  const urls = [];
+  const fetcher = async (url) => {
+    urls.push(String(url));
+    return { ok: true, status: 200, url: String(url), headers: {}, json: async () => ({ total_count: 1, incomplete_results: false, items: [] }) };
+  };
+  const skipped = scenarioFiles.services.services.filter((service) => service.skipIndexingCheck).map((service) => service.key);
+  assert.ok(skipped.length >= 3, 'the indexing experiment needs its controls declared in services.json');
+  const result = await warmRepositoryIndex(fetcher, env, scenarioFiles, { sleep: async () => {}, attempts: 3 });
+  // Issuing the probe is the treatment under test, so ignoring the answer would not be enough.
+  for (const name of skipped) assert.equal(urls.some((url) => url.includes(name)), false, `${name} must never appear in any request URL`);
+  assert.deepEqual([...result.skipped].sort(), [...skipped].sort());
+  const rows = result.repositories.filter((row) => skipped.includes(row.name));
+  assert.ok(rows.every((row) => row.probes === 0 && row.query === null), 'skipped repositories carry no probe count and no query');
+  assert.ok(urls.length > 0, 'non-skipped repositories are still probed');
+});
+test('a repository is indexed only when its own probe reports complete results', async () => {
+  const reply = (incomplete, total) => async (url) => ({ ok: true, status: 200, url: String(url), headers: {}, json: async () => ({ total_count: total, incomplete_results: incomplete, items: [] }) });
+  const settings = settingsFor(env);
+  const indexed = await probeRepositoryIndex(reply(false, 1), 'token', settings, 'demo-catalog', {});
+  assert.equal(indexed.indexed, true);
+  // The real demo-shipping case: zero hits and incomplete_results true means not indexed, never dead.
+  const missing = await probeRepositoryIndex(reply(true, 0), 'token', settings, 'demo-shipping', {});
+  assert.equal(missing.indexed, false);
+});
+test('warming reports an unresolved repository as a manual action, never as clean', async () => {
+  const fetcher = async (url) => ({ ok: true, status: 200, url: String(url), headers: {}, json: async () => ({ total_count: 0, incomplete_results: true, items: [] }) });
+  const result = await warmRepositoryIndex(fetcher, env, scenarioFiles, { sleep: async () => {}, attempts: 2 });
+  assert.equal(result.indexed.length, 0);
+  assert.ok(result.unresolved.length > 0, 'repositories that never flipped must be reported unresolved');
+  assert.equal(result.manualActions.length, result.unresolved.length, 'each unresolved repository gets an explicit manual action');
+  assert.ok(result.manualActions.every((line) => line.includes('repo:')), 'the manual action must contain the exact query to paste');
+  for (const name of result.skipped) assert.equal(result.manualActions.some((line) => line.includes(name)), false, 'a deliberately skipped repository is not a defect to chase');
 });
 test('the tracked scenario compiles and satisfies the topology and consumer contract', () => {
   const model = compileScenario(scenarioFiles);

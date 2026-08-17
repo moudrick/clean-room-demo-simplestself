@@ -1157,7 +1157,12 @@ export function flagAgeEvidence(creationDate, at, minimumAgeDays = DEFAULT_MINIM
 export function mergeCampaign(previous, observed) {
   const campaignStart = previous?.campaignStart || observed.capturedAt;
   const scenarioId = previous?.scenarioId || `campaign-${campaignStart.slice(0, 10)}`;
-  return { schemaVersion: 1, scenarioId, campaignStart, ...observed };
+  const record = { schemaVersion: 1, scenarioId, campaignStart, ...observed };
+  // Index observations are accumulated evidence, not part of any one snapshot, so a plain
+  // baseline capture carries them forward instead of erasing them.
+  const indexing = mergeIndexObservations(previous?.indexing, observed.indexing);
+  if (indexing) record.indexing = indexing; else delete record.indexing;
+  return record;
 }
 export async function baseline(fetcher, env, controls = {}) {
   const settings = settingsFor(env); assertScope({ ...settings }); const t = tokensFor('baseline', env);
@@ -1729,10 +1734,18 @@ export async function scenarioStatus(fetcher, env, scenario, controls = {}) {
   const requestControls = controls.request || {};
   const compiled = compileScenario(scenario);
   const today = controls.today || new Date().toISOString().slice(0, 10);
+  // Status never searches. It reads the index evidence recorded by "scenario index" out of
+  // campaign.json, so showing the column costs no code-search budget and, more importantly,
+  // cannot touch the index of a repository the experiment deliberately leaves alone.
+  const recorded = new Map(((controls.campaign?.indexing || controls.index)?.repositories || []).map((row) => [row.name, row]));
+  const skipped = new Map(scenario.services.services.map((service) => [service.key, service.skipIndexingCheck === true]));
   const repositories = [];
   for (const service of compiled.services) {
     const remote = await repositoryIfPresent(fetcher, t.GH_DEMO_TOKEN, settings, service.key, requestControls);
-    repositories.push({ key: service.key, present: Boolean(remote), tag: service.tag, expectedReferences: service.references });
+    repositories.push({
+      key: service.key, present: Boolean(remote), tag: service.tag, expectedReferences: service.references,
+      index: indexStateFor({ ...recorded.get(service.key), skipped: skipped.get(service.key) === true })
+    });
   }
   const listed = await ld(fetcher, `/api/v2/flags/${settings.project}?limit=100`, t.LD_DEMO_TOKEN, undefined, requestControls);
   const present = new Set((Array.isArray(listed.items) ? listed.items : []).map((item) => item.key));
@@ -1743,29 +1756,255 @@ export async function scenarioStatus(fetcher, env, scenario, controls = {}) {
   });
   return { checksum: compiled.checksum, today, repositories, missingFlags, steps };
 }
-export async function auditFlag(fetcher, token, settings, key) {
-  const search = await gh(fetcher, `/search/code?q=${encodeURIComponent(`${key} org:${settings.org}`)}&per_page=100`, token);
-  if (!search || search.incomplete_results || !Array.isArray(search.items) || search.total_count > search.items.length) return { files: [], complete: false, capped: true };
-  const files = [];
-  for (const item of search.items) {
-    const repo = item.repository?.name;
-    if (!REPOS.includes(repo) || item.repository?.owner?.login !== settings.org) continue;
-    const info = await gh(fetcher, `/repos/${settings.org}/${repo}`, token); const branch = info.default_branch;
-    const content = await gh(fetcher, `/repos/${settings.org}/${repo}/contents/${item.path}?ref=${encodeURIComponent(branch)}`, token);
-    const decoded = Buffer.from(content.content || '', 'base64').toString('utf8');
-    if (!decoded.includes(key)) continue;
-    const commits = await gh(fetcher, `/repos/${settings.org}/${repo}/commits?path=${encodeURIComponent(item.path)}&sha=${encodeURIComponent(branch)}&per_page=1`, token);
-    if (!Array.isArray(commits) || !commits[0]?.commit?.committer?.date) return { files: [], complete: false, malformed: true };
-    files.push({ repo, path: item.path, commit: commits[0].commit.committer.date });
-  }
-  return { files, complete: true };
+// GitHub does not index a repository until something searches it. An organization-wide code
+// search answers incomplete_results: false — which reads as authoritative — while an entire
+// repository is missing from the index: demo-express-returns sits in demo-shipping/app.mjs on
+// main, and "demo-express-returns org:<org>" still returned total_count 0, incomplete_results
+// false. The reliable detector is a per-repository probe: search a common token scoped with
+// repo:<org>/<name> and read incomplete_results. true means GitHub could not search that
+// repository (not indexed); false means the index answered for it (indexed).
+export const INDEX_STATES = { indexed: 'indexed', indexing: 'INDEXING', notIndexed: 'not indexed', skipped: 'skipped (deliberate)' };
+export const CODE_SEARCH_LIMIT_PER_MINUTE = 10;
+export const CODE_SEARCH_MIN_INTERVAL_MS = Math.ceil(60_000 / CODE_SEARCH_LIMIT_PER_MINUTE);
+export const INDEX_PROBE_ATTEMPTS = 3;
+export const INDEX_PROBE_ROUND_DELAY_MS = 30_000;
+const REPOSITORY_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+// Measured: code_search allows 10 requests per minute, search 30, core (Contents) 5000 per hour.
+// request() already retries a 429 with backoff; pacing is what keeps us from earning one.
+function codeSearchPacer(controls = {}) {
+  const sleep = controls.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const now = controls.now || Date.now;
+  const interval = controls.codeSearchIntervalMs ?? CODE_SEARCH_MIN_INTERVAL_MS;
+  if (!Number.isFinite(interval) || interval < 0) throw new Error('Invalid code-search pacing interval.');
+  let previous = null;
+  return async () => {
+    if (previous !== null) { const wait = interval - (now() - previous); if (wait > 0) await sleep(wait); }
+    previous = now();
+  };
 }
-export async function audit(fetcher, env) {
-  const t = tokensFor('audit', env); const settings = settingsFor(env); assertScope({ ...settings }); await checkLaunchDarkly(fetcher, t.LD_DEMO_TOKEN, settings, true);
-  const listed = await ld(fetcher, `/api/v2/flags/${settings.project}?limit=100`, t.LD_DEMO_TOKEN);
-  if (!Array.isArray(listed.items)) throw new Error('Malformed LaunchDarkly flag evidence.');
+export function indexProbeQuery(org, name) {
+  if (!REPOSITORY_NAME.test(org || '') || !REPOSITORY_NAME.test(name || '')) throw new Error('Refusing an unsafe identifier in a code-search query.');
+  return `import repo:${org}/${name}`;
+}
+export function indexManualAction(org, name, probes = 0) {
+  const query = indexProbeQuery(org, name);
+  return `MANUAL ACTION REQUIRED: ${org}/${name} is still absent from the code index after ${probes} probe(s). Open https://github.com/search?type=code&q=${encodeURIComponent(query)} and run this query in the GitHub web UI: ${query}`;
+}
+export async function probeRepositoryIndex(fetcher, token, settings, name, controls) {
+  const query = indexProbeQuery(settings.org, name);
+  const result = await gh(fetcher, `/search/code?q=${encodeURIComponent(query)}&per_page=1`, token, undefined, controls);
+  if (typeof result?.incomplete_results !== 'boolean') throw new Error(`Malformed code-search evidence for ${settings.org}/${name}.`);
+  return { name, query, indexed: result.incomplete_results === false, totalCount: Number.isInteger(result.total_count) ? result.total_count : null };
+}
+export function indexTargets(scenario) {
+  const compiled = compileScenario(scenario);
+  const declared = new Map(scenario.services.services.map((service) => [service.key, service]));
+  return compiled.services.map((service) => ({ name: service.key, template: declared.get(service.key)?.template || 'nodejs', skipped: declared.get(service.key)?.skipIndexingCheck === true }));
+}
+export function indexStateFor(record) {
+  if (record?.skipped) return INDEX_STATES.skipped;
+  if (record?.firstIndexedAt) return INDEX_STATES.indexed;
+  if (record?.indexRequestedAt) return INDEX_STATES.indexing;
+  return INDEX_STATES.notIndexed;
+}
+export function unindexedRepositories(indexing, targets) {
+  const recorded = new Map((indexing?.repositories || []).map((row) => [row.name, row]));
+  return targets.filter((target) => !target.skipped && indexStateFor({ ...recorded.get(target.name), skipped: false }) !== INDEX_STATES.indexed).map((target) => target.name);
+}
+export async function warmRepositoryIndex(fetcher, env, scenario, controls = {}) {
+  const settings = settingsFor(env); const t = tokensFor('scenario', env);
+  const requestControls = controls.request || {};
+  const now = controls.now || Date.now; const at = () => new Date(now()).toISOString();
+  const sleep = controls.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const pace = codeSearchPacer({ ...controls, sleep, now });
+  const attempts = controls.attempts ?? INDEX_PROBE_ATTEMPTS;
+  const roundDelayMs = controls.roundDelayMs ?? INDEX_PROBE_ROUND_DELAY_MS;
+  if (!Number.isInteger(attempts) || attempts < 1) throw new Error('Index warming needs at least one attempt.');
+  const pushed = controls.firstPushAt || {};
+  const rows = new Map();
+  for (const target of indexTargets(scenario)) {
+    // A skipIndexingCheck repository is a control in the indexing experiment: the open question
+    // is whether API probing alone triggers indexing or only the web UI does. It is therefore
+    // never named in any request — not probed, not retried, not even paced for. Ignoring the
+    // answer would not do, because issuing the request is the treatment under test.
+    rows.set(target.name, {
+      name: target.name, skipped: target.skipped, state: target.skipped ? INDEX_STATES.skipped : INDEX_STATES.notIndexed,
+      firstPushAt: pushed[target.name] || null, indexRequestedAt: null, firstIndexedAt: null, probes: 0, totalCount: null,
+      query: target.skipped ? null : indexProbeQuery(settings.org, target.name)
+    });
+  }
+  const pending = [...rows.values()].filter((row) => !row.skipped).map((row) => row.name);
+  let searches = 0;
+  for (let attempt = 1; attempt <= attempts && pending.length; attempt += 1) {
+    for (const name of [...pending]) {
+      const row = rows.get(name);
+      await pace();
+      searches += 1; row.probes += 1; row.indexRequestedAt = row.indexRequestedAt || at();
+      let probe;
+      try { probe = await probeRepositoryIndex(fetcher, t.GH_DEMO_TOKEN, settings, name, requestControls); }
+      catch (error) { row.error = redact(error, [t.GH_DEMO_TOKEN]); if (controls.onProbe) await controls.onProbe({ ...row, attempt }); continue; }
+      delete row.error; row.totalCount = probe.totalCount;
+      if (probe.indexed) { row.firstIndexedAt = row.firstIndexedAt || at(); row.state = INDEX_STATES.indexed; pending.splice(pending.indexOf(name), 1); }
+      else row.state = INDEX_STATES.indexing;
+      if (controls.onProbe) await controls.onProbe({ ...row, attempt });
+    }
+    if (pending.length && attempt < attempts) await sleep(roundDelayMs);
+  }
+  const repositories = [...rows.values()].sort((a, b) => a.name.localeCompare(b.name));
+  // A repository that never flipped is never reported as fine. The window expiring is a result
+  // that needs a human and an exact query, not a silent pass.
+  const manualActions = repositories.filter((row) => !row.skipped && !row.firstIndexedAt).map((row) => indexManualAction(settings.org, row.name, row.probes));
+  return {
+    probedAt: at(), attempts, searches, repositories, manualActions,
+    indexed: repositories.filter((row) => row.firstIndexedAt).map((row) => row.name),
+    unresolved: repositories.filter((row) => !row.skipped && !row.firstIndexedAt).map((row) => row.name),
+    skipped: repositories.filter((row) => row.skipped).map((row) => row.name)
+  };
+}
+export function mergeIndexObservations(previous, observed) {
+  if (!observed) return previous || undefined;
+  const before = new Map((previous?.repositories || []).map((row) => [row.name, row]));
+  const merged = (observed.repositories || []).map((row) => {
+    const earlier = before.get(row.name) || {};
+    // These three are first-observation facts. A later run never overwrites them, or the interval
+    // between push, first search request, and first indexed answer stops meaning anything.
+    const record = {
+      ...row, firstPushAt: earlier.firstPushAt || row.firstPushAt || null,
+      indexRequestedAt: earlier.indexRequestedAt || row.indexRequestedAt || null,
+      firstIndexedAt: earlier.firstIndexedAt || row.firstIndexedAt || null
+    };
+    return { ...record, state: indexStateFor(record) };
+  });
+  const names = new Set(merged.map((row) => row.name));
+  const carried = (previous?.repositories || []).filter((row) => !names.has(row.name));
+  return { ...observed, repositories: [...merged, ...carried].sort((a, b) => a.name.localeCompare(b.name)) };
+}
+export function campaignWithIndexing(previous, indexing) {
+  if (!previous || typeof previous !== 'object' || typeof previous.capturedAt !== 'string') throw new Error('Index evidence needs an existing campaign record; run "node demo.mjs baseline" first.');
+  return mergeCampaign(previous, { ...previous, indexing });
+}
+// TRUTH. Read the source directly: the Contents API is 5000 requests per hour, serves the default
+// branch when no ref is given, and is completely independent of the code index. This half of the
+// audit is exact, which is precisely what search cannot promise.
+export const ENTRY_FILES = { nodejs: 'app.mjs', typescript: 'app.ts', go: 'main.go', python: 'app.py' };
+export function entryFileFor(template) {
+  const file = ENTRY_FILES[template];
+  if (!file) throw new Error(`No entry file is defined for template "${String(template)}".`);
+  return file;
+}
+export function flagKeysInSource(source, keys) {
+  const text = String(source || '');
+  // Whole-key matching, so demo-cart never collects the evidence belonging to demo-cart-v2.
+  return keys.filter((key) => new RegExp(`(?<![A-Za-z0-9._-])${String(key).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9._-])`).test(text)).sort();
+}
+export async function readFlagTruth(fetcher, token, settings, repositories, keys, controls = {}) {
+  const requestControls = controls.request || {};
   const rows = [];
-  for (const flag of listed.items.filter((f) => FLAGS.includes(f.key))) { let evidence; try { evidence = await auditFlag(fetcher, t.GH_DEMO_TOKEN, settings, flag.key); } catch { evidence = { files: [], complete: false, error: true }; }
-    rows.push({ key: flag.key, files: evidence.files || [], result: outcome(evidence) }); }
-  return rows;
+  for (const repository of repositories) {
+    const file = entryFileFor(repository.template);
+    const row = { name: repository.name, path: file, template: repository.template, skipped: repository.skipped === true, read: false, keys: [], lastCommit: null };
+    try {
+      const contents = await gh(fetcher, `/repos/${settings.org}/${repository.name}/contents/${file}`, token, undefined, requestControls);
+      if (typeof contents?.content !== 'string') throw new Error(`Malformed contents evidence for ${repository.name}/${file}.`);
+      row.read = true; row.keys = flagKeysInSource(Buffer.from(contents.content, 'base64').toString('utf8'), keys);
+    } catch (error) { row.error = redact(error, [token]); rows.push(row); continue; }
+    try {
+      const commits = await gh(fetcher, `/repos/${settings.org}/${repository.name}/commits?path=${encodeURIComponent(file)}&per_page=1`, token, undefined, requestControls);
+      row.lastCommit = Array.isArray(commits) ? commits[0]?.commit?.committer?.date ?? null : null;
+    } catch (error) { row.error = redact(error, [token]); }
+    rows.push(row);
+  }
+  const byFlag = new Map(keys.map((key) => [key, []]));
+  for (const row of rows) for (const key of row.keys) byFlag.get(key).push({ repo: row.name, path: row.path, commit: row.lastCommit });
+  return { repositories: rows, byFlag, unreadable: rows.filter((row) => !row.read).map((row) => row.name) };
+}
+// EVIDENCE. The organization-wide code search, kept strictly separate from truth and run only
+// where a zero-reference claim is at stake. Its answer is index-dependent and therefore never
+// authoritative on its own.
+export async function searchFlagEvidence(fetcher, token, settings, key, controls = {}) {
+  const query = `${key} org:${settings.org}`;
+  const result = await gh(fetcher, `/search/code?q=${encodeURIComponent(query)}&per_page=100`, token, undefined, controls.request);
+  const items = Array.isArray(result?.items) ? result.items : [];
+  const total = Number.isInteger(result?.total_count) ? result.total_count : null;
+  return {
+    query, totalCount: total, incomplete: result?.incomplete_results === true,
+    capped: total !== null && total > items.length,
+    files: items.filter((item) => item.repository?.owner?.login === settings.org).map((item) => ({ repo: item.repository?.name ?? null, path: item.path ?? null }))
+  };
+}
+// One code-search request instead of one per flag: every generated evaluator calls boolVariation,
+// so a single organization-scoped token sweep lists every file the index can see at all, and the
+// repositories missing from that list are the ones search is blind to.
+//
+// This is a rate-limit workaround for THIS synthetic repository set, where one SDK method, one
+// variation type, and literal inline keys are guaranteed because a generator wrote every file.
+// It is NOT a general technique for finding flag references in real code: real code uses
+// non-boolean variations, several SDK methods, in-house wrappers, and keys assembled at runtime,
+// and a single-token sweep silently misses all of them.
+export async function sweepEvaluationSites(fetcher, token, settings, controls = {}) {
+  const query = `boolVariation org:${settings.org}`;
+  const result = await gh(fetcher, `/search/code?q=${encodeURIComponent(query)}&per_page=100`, token, undefined, controls.request);
+  const items = Array.isArray(result?.items) ? result.items : [];
+  const files = items.filter((item) => item.repository?.owner?.login === settings.org).map((item) => ({ repo: item.repository?.name ?? null, path: item.path ?? null }));
+  return { query, totalCount: Number.isInteger(result?.total_count) ? result.total_count : null, incomplete: result?.incomplete_results === true, files, repositories: [...new Set(files.map((file) => file.repo))].sort() };
+}
+export const AUDIT_RESULTS = { referenced: 'REFERENCED', stale: 'STALE CANDIDATE', dead: 'DEAD CANDIDATE', unknown: 'UNKNOWN', disagreement: 'DISAGREEMENT' };
+export async function audit(fetcher, env, controls = {}) {
+  const t = tokensFor('audit', env); const settings = settingsFor(env); assertScope({ ...settings }); await checkLaunchDarkly(fetcher, t.LD_DEMO_TOKEN, settings, true);
+  const requestControls = controls.request || {};
+  const listed = await ld(fetcher, `/api/v2/flags/${settings.project}?limit=100`, t.LD_DEMO_TOKEN, undefined, requestControls);
+  if (!Array.isArray(listed.items)) throw new Error('Malformed LaunchDarkly flag evidence.');
+  const keys = listed.items.map((item) => item.key).filter((key) => typeof key === 'string').sort();
+  const targets = controls.scenario ? indexTargets(controls.scenario) : REPOS.map((name) => ({ name, template: 'nodejs', skipped: false }));
+  const truth = await readFlagTruth(fetcher, t.GH_DEMO_TOKEN, settings, targets, keys, { request: requestControls });
+  // The skip list governs the code index only. Reading a control repository's source over the
+  // Contents API is a different subsystem and does not disturb the experiment — and it is what
+  // keeps a flag whose only caller is a control repository from ever looking dead.
+  const unindexed = unindexedRepositories(controls.index, targets);
+  const claims = keys.filter((key) => !(truth.byFlag.get(key) || []).length);
+  const crossCheck = (controls.crossCheck || []).filter((key) => keys.includes(key));
+  const searched = [...new Set([...claims, ...crossCheck])].sort();
+  const pace = codeSearchPacer(controls);
+  const evidence = new Map();
+  const sweep = controls.sweep ? await (async () => { await pace(); try { return await sweepEvaluationSites(fetcher, t.GH_DEMO_TOKEN, settings, { request: requestControls }); } catch (error) { return { error: redact(error, [t.GH_DEMO_TOKEN]) }; } })() : null;
+  for (const key of searched) {
+    await pace();
+    try { evidence.set(key, await searchFlagEvidence(fetcher, t.GH_DEMO_TOKEN, settings, key, { request: requestControls })); }
+    catch (error) { evidence.set(key, { query: `${key} org:${settings.org}`, error: redact(error, [t.GH_DEMO_TOKEN]), files: [], totalCount: null, incomplete: true }); }
+  }
+  const blockers = [
+    ...(unindexed.length ? [`${unindexed.length} managed repository(ies) are not known to be in the code index (${unindexed.join(', ')})`] : []),
+    ...(truth.unreadable.length ? [`source could not be read for ${truth.unreadable.join(', ')}`] : [])
+  ];
+  const refusal = blockers.length ? `Zero-reference claims refused: ${blockers.join('; ')}. Run "node demo.mjs scenario index", then re-run the audit.` : null;
+  const rows = keys.map((key) => {
+    const files = truth.byFlag.get(key) || [];
+    const found = evidence.get(key) || null;
+    const searchFiles = (found?.files || []).filter((file) => targets.some((target) => target.name === file.repo));
+    const row = { key, truth: { files, result: files.length ? outcome({ files, complete: true }) : null }, evidence: found ? { ...found, managedFiles: searchFiles } : null, disagreement: null, refused: null, result: AUDIT_RESULTS.unknown };
+    if (files.length) {
+      row.result = row.truth.result;
+      // Both directions are reported, and neither side is silently preferred: truth is exact,
+      // so it wins the archive decision, but a search that cannot see a file we just read is
+      // itself the finding.
+      if (found && !found.error && !searchFiles.length) row.disagreement = { kind: 'search-under-reports', detail: `Source contains ${key} in ${files.map((file) => `${file.repo}/${file.path}`).join(', ')}, and the organization-wide search returned ${found.totalCount ?? 0} match(es) with incomplete_results ${found.incomplete}. The index, not the code, is what changed.` };
+      return row;
+    }
+    if (found?.error || found?.incomplete || found?.capped) { row.result = AUDIT_RESULTS.unknown; row.refused = found.error || 'The organization-wide search answered incompletely.'; return row; }
+    if (searchFiles.length) {
+      row.result = AUDIT_RESULTS.disagreement;
+      row.disagreement = { kind: 'truth-missed-a-reference', detail: `No entry file declares ${key}, but the organization-wide search found it in ${searchFiles.map((file) => `${file.repo}/${file.path}`).join(', ')}. Something references the flag outside the file the audit reads; resolve before archiving.` };
+      return row;
+    }
+    if (refusal) { row.result = AUDIT_RESULTS.unknown; row.refused = refusal; return row; }
+    row.result = AUDIT_RESULTS.dead;
+    return row;
+  });
+  return {
+    rows, truth: { repositories: truth.repositories, unreadable: truth.unreadable },
+    index: { unindexed, refusal, skipped: targets.filter((target) => target.skipped).map((target) => target.name) },
+    searched, sweep,
+    disagreements: rows.filter((row) => row.disagreement).map((row) => ({ key: row.key, ...row.disagreement })),
+    manualActions: unindexed.map((name) => indexManualAction(settings.org, name))
+  };
 }

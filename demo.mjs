@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { doctor, recreate, refresh, destroy, audit, baseline, bootstrapFlags, mergeCampaign, loadScenario, compileScenario, stepsThrough, reconcileStep, scenarioStatus, settingsFor, REPOS, FLAGS, ENVIRONMENTS, progressLine, redact } from './lib.mjs';
+import { doctor, recreate, refresh, destroy, audit, baseline, bootstrapFlags, mergeCampaign, campaignWithIndexing, warmRepositoryIndex, loadScenario, compileScenario, stepsThrough, reconcileStep, scenarioStatus, settingsFor, REPOS, FLAGS, ENVIRONMENTS, progressLine, redact } from './lib.mjs';
 
 function loadEnv() {
   const file = '.env';
@@ -40,8 +40,24 @@ try {
   } else if (command === 'destroy') {
     printTargets(); for (const [name, state] of await destroy(fetch, env, confirmation, { breakCampaignLock })) console.log(`${name}: ${state}`);
   } else if (command === 'audit') {
-    console.log('FLAG | VERIFIED FILES | REPOSITORIES | LAST FILE COMMIT | RESULT');
-    for (const row of await audit(fetch, env)) { const latest = row.files.map((f) => f.commit).sort().at(-1) || '-'; console.log(`${row.key} | ${row.files.map((f) => f.path).join(',') || '-'} | ${[...new Set(row.files.map((f) => f.repo))].join(',') || '-'} | ${latest} | ${row.result}`); }
+    const campaign = fs.existsSync('campaign.json') ? JSON.parse(fs.readFileSync('campaign.json', 'utf8')) : null;
+    let scenario = null; try { scenario = loadScenario(process.cwd()); } catch { scenario = null; }
+    const report = await audit(fetch, env, { scenario, index: campaign?.indexing, sweep: process.argv.includes('--sweep'), crossCheck: (argumentAfter('--cross-check') || '').split(',').filter(Boolean) });
+    console.log('TRUTH — source read directly through the Contents API, independent of the code index.');
+    console.log('REPOSITORY | ENTRY FILE | READ | FLAG KEYS FOUND | LAST COMMIT');
+    for (const row of report.truth.repositories) console.log(`${row.name} | ${row.path} | ${row.read ? 'yes' : `FAILED (${row.error || 'unknown'})`} | ${row.keys.join(',') || '-'} | ${row.lastCommit || '-'}`);
+    console.log(`EVIDENCE — organization-wide code search, run for ${report.searched.length} flag(s) only: ${report.searched.join(', ') || 'none'}.`);
+    if (report.sweep) console.log(`Single-token sweep "${report.sweep.query}": ${report.sweep.error ? `failed (${report.sweep.error})` : `${report.sweep.files?.length ?? 0} file(s) across ${report.sweep.repositories?.join(', ') || 'no repository'}`}`);
+    console.log('FLAG | TRUTH FILES | TRUTH REPOSITORIES | LAST FILE COMMIT | SEARCH | RESULT');
+    for (const row of report.rows) {
+      const latest = row.truth.files.map((file) => file.commit).filter(Boolean).sort().at(-1) || '-';
+      const search = row.evidence ? (row.evidence.error ? 'error' : `${row.evidence.totalCount ?? 0} hit(s)${row.evidence.incomplete ? ', INCOMPLETE' : ''}`) : 'not searched';
+      console.log(`${row.key} | ${row.truth.files.map((file) => file.path).join(',') || '-'} | ${[...new Set(row.truth.files.map((file) => file.repo))].join(',') || '-'} | ${latest} | ${search} | ${row.result}`);
+    }
+    if (report.index.refusal) console.log(report.index.refusal);
+    if (report.index.skipped.length) console.log(`Index state is unknown by design for ${report.index.skipped.join(', ')} (skipIndexingCheck). Their source is still read for truth.`);
+    for (const disagreement of report.disagreements) console.log(`DISAGREEMENT (${disagreement.kind}) ${disagreement.key}: ${disagreement.detail}`);
+    for (const line of report.manualActions) console.log(line);
   } else if (command === 'baseline') {
     const file = 'campaign.json';
     const previous = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
@@ -106,11 +122,29 @@ try {
       state.appliedSteps = [...state.appliedSteps.filter((item) => item.id !== result.step), { id: result.step, checksum: result.checksum, appliedAt: new Date().toISOString(), created: result.created.map((item) => ({ service: item.service, repositoryId: item.repositoryId, commitSha: item.commitSha, tag: item.tag, firstPushAt: item.firstPushAt })) }];
       fs.writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
       console.log(`Recorded applied state in ${stateFile}.`);
+    } else if (sub === 'index') {
+      const campaignFile = 'campaign.json';
+      const previous = fs.existsSync(campaignFile) ? JSON.parse(fs.readFileSync(campaignFile, 'utf8')) : null;
+      const firstPushAt = { ...Object.fromEntries((previous?.indexing?.repositories || []).filter((row) => row.firstPushAt).map((row) => [row.name, row.firstPushAt])) };
+      for (const step of readState().appliedSteps || []) for (const item of step.created || []) if (item.firstPushAt && !firstPushAt[item.service]) firstPushAt[item.service] = item.firstPushAt;
+      const result = await warmRepositoryIndex(fetch, env, scenario, {
+        firstPushAt,
+        onProbe: (row) => console.log(`probe ${row.attempt}: ${row.name} | ${row.error ? `error (${row.error})` : row.state}`)
+      });
+      console.log(`Probed ${result.searches} code search(es) across ${result.repositories.length - result.skipped.length} repository(ies); ${result.skipped.length} skipped by design: ${result.skipped.join(', ') || 'none'}.`);
+      console.log('REPOSITORY | INDEX | FIRST PUSH | INDEX REQUESTED | FIRST INDEXED | PROBES');
+      for (const row of result.repositories) console.log(`${row.name} | ${row.state} | ${row.firstPushAt || '-'} | ${row.indexRequestedAt || '-'} | ${row.firstIndexedAt || '-'} | ${row.probes}`);
+      for (const line of result.manualActions) console.log(line);
+      if (previous) {
+        fs.writeFileSync(campaignFile, `${JSON.stringify(campaignWithIndexing(previous, result), null, 2)}\n`);
+        console.log(`Recorded index evidence in ${campaignFile}. No repository, flag, or remote resource was modified.`);
+      } else console.log(`No ${campaignFile} to record into; run "node demo.mjs baseline" first to keep this evidence.`);
     } else if (sub === 'status') {
-      const status = await scenarioStatus(fetch, env, scenario);
+      const campaign = fs.existsSync('campaign.json') ? JSON.parse(fs.readFileSync('campaign.json', 'utf8')) : null;
+      const status = await scenarioStatus(fetch, env, scenario, { campaign });
       console.log(`Scenario checksum ${status.checksum} | today ${status.today}`);
-      console.log('REPOSITORY | PRESENT | TAG | EXPECTED REFERENCES');
-      for (const repository of status.repositories) console.log(`${repository.key} | ${repository.present ? 'yes' : 'MISSING'} | ${repository.tag || '-'} | ${repository.expectedReferences.join(',') || '-'}`);
+      console.log('REPOSITORY | PRESENT | INDEX | TAG | EXPECTED REFERENCES');
+      for (const repository of status.repositories) console.log(`${repository.key} | ${repository.present ? 'yes' : 'MISSING'} | ${repository.index} | ${repository.tag || '-'} | ${repository.expectedReferences.join(',') || '-'}`);
       console.log(`Catalog flags missing from the project: ${status.missingFlags.length ? status.missingFlags.join(', ') : 'none'}`);
       const applied = new Set(readState().appliedSteps.map((item) => item.id));
       console.log('STEP | DATE | STATE | TIMING');
@@ -118,6 +152,6 @@ try {
         const timing = step.overdueDays > 0 ? `${step.overdueDays} day(s) overdue` : step.dueToday ? 'due today' : 'future';
         console.log(`${step.id} | ${step.recommendedDate} | ${applied.has(step.id) ? 'applied' : 'pending'} | ${timing}`);
       }
-    } else throw new Error('Usage: node demo.mjs scenario <list|plan|apply|status> [--to <step>]');
+    } else throw new Error('Usage: node demo.mjs scenario <list|plan|apply|status|index> [--to <step>]');
   } else throw new Error('Usage: node demo.mjs <doctor|baseline|bootstrap|scenario|recreate|refresh|audit|destroy> [--confirm $LD_PROJECT_KEY]');
 } catch (error) { console.error(`Error: ${redact(error, secrets)}`); process.exitCode = 1; }
