@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "id": "s011",
+  "title": "Earliest track: complete Staging, expand Production to the second cluster",
+  "recommendedDate": "2026-08-18",
+  "cadence": "daily",
+  "transition": "production-expansion",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "targeting": [
+    {
+      "flag": "demo-email-notifications-v2",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02",
+        "stg-eu-central-01"
+      ]
+    },
+    {
+      "flag": "demo-email-notifications-v2",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02"
+      ]
+    },
+    {
+      "flag": "demo-tax-calculation-v2",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02",
+        "stg-eu-central-01"
+      ]
+    },
+    {
+      "flag": "demo-tax-calculation-v2",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02"
+      ]
+    }
+  ],
+  "notes": [
+    "Staging reaches both clusters, so it now serves true to all Staging traffic. Production adds prod-sa-east-02 at ten per cent, taking the Production share from five to fifteen per cent.",
+    "Cluster rules rather than a fallthrough change: the terminal fully-rolled-out state is deliberately saved for the final step, so the crossover stays legible as an accelerating curve of 5, 15, 30, 60 and 100 per cent.",
+    "Verified before this step: the canary was serving true to exactly 5 of 100 Production contexts and 12 of 30 Staging contexts, matching prod-eu-west-02 at five per cent and stg-eu-central-02 at forty.",
+    "The three open-track flags are deliberately untouched. They advance one cluster every day or two so they remain visibly mid-rollout on 5 October."
+  ]
+}
