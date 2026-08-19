@@ -693,7 +693,10 @@ test('the compiler is forward-only and refuses contract violations', () => {
   assert.throws(() => compileScenario(overCap), /exceeding the cap of 4/);
   const undeclared = base(); undeclared.steps[0].sourceReferences['demo-search'] = ['demo-fraud-screening'];
   assert.throws(() => compileScenario(undeclared), /does not declare it as a consumer/);
-  const gap = base(); gap.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: '2026-08-19', cadence: 'three-day', minGapDaysFromPrevious: 3 });
+  // Derived from the last real step so adding campaign steps cannot break this assertion.
+  const gap = base();
+  const dayAfterLast = new Date(Date.parse(`${gap.steps.at(-1).recommendedDate}T00:00:00.000Z`) + 86400000).toISOString().slice(0, 10);
+  gap.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: dayAfterLast, cadence: 'three-day', minGapDaysFromPrevious: 3 });
   assert.throws(() => compileScenario(gap), /requires at least 3/);
 });
 test('reconcile creates missing catalog repositories and refuses ownership drift', async () => {

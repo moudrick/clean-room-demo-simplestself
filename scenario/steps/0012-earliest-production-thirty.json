@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "id": "s012",
+  "title": "Earliest track: Production expands to thirty per cent",
+  "recommendedDate": "2026-08-19",
+  "cadence": "daily",
+  "transition": "production-expansion",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "targeting": [
+    {
+      "flag": "demo-email-notifications-v2",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02",
+        "stg-eu-central-01"
+      ]
+    },
+    {
+      "flag": "demo-email-notifications-v2",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02",
+        "prod-us-east-02"
+      ]
+    },
+    {
+      "flag": "demo-tax-calculation-v2",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02",
+        "stg-eu-central-01"
+      ]
+    },
+    {
+      "flag": "demo-tax-calculation-v2",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02",
+        "prod-us-east-02"
+      ]
+    }
+  ],
+  "notes": [
+    "Adds prod-us-east-02 at fifteen per cent, taking Production from fifteen to thirty. Third point on the accelerating curve of 5, 15, 30, 60, 100.",
+    "Staging is already complete and its rules are restated unchanged, because targeting is declarative: each entry describes the whole desired state for that flag and environment rather than a delta.",
+    "Still cluster rules, not a fallthrough change. The terminal fully-rolled-out state is saved for s014 so the crossover stays legible.",
+    "The three open-track flags remain untouched and continue to crawl toward 5 October."
+  ]
+}

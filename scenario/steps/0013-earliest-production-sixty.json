@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "s013",
+  "title": "Earliest track: Production expands to sixty per cent",
+  "recommendedDate": "2026-08-20",
+  "cadence": "daily",
+  "transition": "production-expansion",
+  "minGapDaysFromPrevious": 1,
+  "gates": [],
+  "targeting": [
+    {
+      "flag": "demo-email-notifications-v2",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02",
+        "stg-eu-central-01"
+      ]
+    },
+    {
+      "flag": "demo-email-notifications-v2",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02",
+        "prod-us-east-02",
+        "prod-emea-central-04"
+      ]
+    },
+    {
+      "flag": "demo-tax-calculation-v2",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02",
+        "stg-eu-central-01"
+      ]
+    },
+    {
+      "flag": "demo-tax-calculation-v2",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02",
+        "prod-us-east-02",
+        "prod-emea-central-04"
+      ]
+    }
+  ],
+  "notes": [
+    "Adds prod-emea-central-04 at thirty per cent, doubling Production from thirty to sixty. Fourth point on the accelerating curve of 5, 15, 30, 60, 100.",
+    "This is the largest single jump before the final commitment, which is what makes least-populated-first worth doing: the increments grow rather than repeat.",
+    "Verified before writing this step: thirty per cent held exactly, reported identically by demo-pricing in Node.js and demo-checkout in TypeScript, so the two languages agree on the same targeting.",
+    "One more step after this one takes Production to a hundred, then s015 clears the rules and serves true, freezing targeting for the seven-day window."
+  ]
+}
