@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "metric": "average concurrent server-side SDK connections across the calendar month",
+  "limit": 5,
+  "note": "Observations are real readings from LaunchDarkly plan usage, not projections. Cost per container is derived from them, because an analytical estimate was wrong by roughly three hundred times: short-lived clients reconnecting every five minutes were assumed to cost 0.005 concurrent each and actually cost about 1.2. Never replace an observation with a calculation.",
+  "observations": [
+    { "at": "2026-08-16T13:52:00Z", "used": 0.386, "containers": 12, "note": "12 long-lived clients, one per container" },
+    { "at": "2026-08-17T06:30:00Z", "used": 0.512, "containers": 12, "note": "short-lived clients deployed the previous evening" },
+    { "at": "2026-08-20T12:00:00Z", "used": 3.761, "containers": 32, "note": "32 short-lived clients; burn far above prediction" },
+    { "at": "2026-08-20T12:10:00Z", "used": 3.761, "containers": 3, "note": "cut to 3 to stop the burn: orders prod+staging, checkout production" }
+  ],
+  "tiers": [
+    { "name": "full", "containers": 32, "keep": "every service on both critical environments", "use": "only with a full month of headroom and a measured cost per container below 0.15" },
+    { "name": "reduced", "containers": 8, "keep": "archive candidates, controls, and one evaluator per language", "use": "projected month end below eighty per cent of limit" },
+    { "name": "minimal", "containers": 3, "keep": "orders production and staging, checkout production", "use": "projected month end near the limit; retains both archive candidates and all three controls" },
+    { "name": "critical", "containers": 2, "keep": "orders production and staging", "use": "headroom under half a container-month; demo-tax-calculation-v2 stops advancing" },
+    { "name": "frozen", "containers": 1, "keep": "orders production only", "use": "limit reached; preserves one control so a later silence window can still be proven genuine" }
+  ]
+}

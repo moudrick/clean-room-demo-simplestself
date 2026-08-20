@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { doctor, recreate, refresh, destroy, audit, baseline, bootstrapFlags, mergeCampaign, campaignWithIndexing, warmRepositoryIndex, loadScenario, compileScenario, stepsThrough, reconcileStep, scenarioStatus, settingsFor, REPOS, FLAGS, ENVIRONMENTS, progressLine, redact } from './lib.mjs';
+import { doctor, recreate, refresh, destroy, audit, baseline, bootstrapFlags, mergeCampaign, campaignWithIndexing, warmRepositoryIndex, connectionBudget, loadScenario, compileScenario, stepsThrough, reconcileStep, scenarioStatus, settingsFor, REPOS, FLAGS, ENVIRONMENTS, progressLine, redact } from './lib.mjs';
 
 function loadEnv() {
   const file = '.env';
@@ -152,6 +152,27 @@ try {
         const timing = step.overdueDays > 0 ? `${step.overdueDays} day(s) overdue` : step.dueToday ? 'due today' : 'future';
         console.log(`${step.id} | ${step.recommendedDate} | ${applied.has(step.id) ? 'applied' : 'pending'} | ${timing}`);
       }
-    } else throw new Error('Usage: node demo.mjs scenario <list|plan|apply|status|index> [--to <step>]');
+    } else if (sub === 'budget') {
+      const file = 'scenario/budget.json';
+      const budget = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const record = argumentAfter('--record');
+      if (record !== undefined) {
+        const used = Number(record);
+        if (!Number.isFinite(used) || used < 0) throw new Error('scenario budget --record needs the usage figure shown by the vendor, for example 3.761');
+        const containers = Number(argumentAfter('--containers') ?? compileScenario(scenario).deployments.length);
+        budget.observations.push({ at: new Date().toISOString(), used, containers, note: argumentAfter('--note') || 'recorded from plan usage' });
+        fs.writeFileSync(file, `${JSON.stringify(budget, null, 2)}
+`);
+        console.log(`Recorded reading ${used} at ${containers} evaluator(s). Observations are real readings; never replace one with a projection.`);
+      }
+      const report = connectionBudget(budget, { containers: Number(argumentAfter('--containers') ?? compileScenario(scenario).deployments.length) });
+      console.log(`SEVERITY ${report.severity} | used ${report.used} of ${report.limit} | headroom ${report.headroom.toFixed(3)} | ${report.remainingDays} day(s) left this month`);
+      if (report.measuredOver) console.log(`Measured over ${report.measuredOver.days} day(s) at ${report.measuredOver.containers} evaluator(s): ${report.costPerContainer.toFixed(3)} concurrent connection(s) per evaluator.`);
+      console.log(`At ${report.running} evaluator(s), projected month end ${report.projectedMonthEnd === null ? 'unknown' : report.projectedMonthEnd.toFixed(2)}; affordable ${report.affordableContainers ?? 'unknown'}.`);
+      if (report.recommendedTier) console.log(`Recommended tier: ${report.recommendedTier.name} — ${report.recommendedTier.keep}`);
+      for (const warning of report.warnings) console.log(`WARNING: ${warning}`);
+      console.log('TIER | EVALUATORS | KEEP');
+      for (const tier of budget.tiers || []) console.log(`${tier.name} | ${tier.containers} | ${tier.keep}`);
+    } else throw new Error('Usage: node demo.mjs scenario <list|plan|apply|status|index|budget> [--to <step>] [--record <used>]');
   } else throw new Error('Usage: node demo.mjs <doctor|baseline|bootstrap|scenario|recreate|refresh|audit|destroy> [--confirm $LD_PROJECT_KEY]');
 } catch (error) { console.error(`Error: ${redact(error, secrets)}`); process.exitCode = 1; }

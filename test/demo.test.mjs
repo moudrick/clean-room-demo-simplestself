@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE, loadScenario, compileScenario, assertSandbox, assertServices, reconcileStep, catalogSource, OWNERSHIP_MARKER, clusterTopologyFor, targetingInstructions, warmRepositoryIndex, probeRepositoryIndex } from '../lib.mjs';
+import { ORG_ENV, PROJECT_ENV, REPOS, FLAGS, ENVIRONMENTS, GH, LD, SOURCES, request, rateLimitDelayMs, doctor, recreate, refresh, destroy, audit, checkLaunchDarkly, createRepositoryWithSource, createProject, prepareRuntime, configureFlagTargeting, removeIfPresent, waitForRepositoryAbsence, waitForProjectAbsence, settingsFor, assertScope, tokensFor, requireConfirmation, outcome, progressLine, redact, detailedEventsFor, generationIdFor, assertRuntimeStopped, campaignLocked, assertCampaignUnlocked, breakGlassPhrase, CAMPAIGN_LOCK_ENV, baseline, mergeCampaign, flagAgeEvidence, assertFlagCatalog, bootstrapFlags, CATALOG_SIZE, loadScenario, compileScenario, assertSandbox, assertServices, reconcileStep, catalogSource, OWNERSHIP_MARKER, clusterTopologyFor, targetingInstructions, warmRepositoryIndex, probeRepositoryIndex, connectionBudget, assertBudget, BUDGET_SEVERITY } from '../lib.mjs';
 const catalogFile = JSON.parse(fs.readFileSync(new URL('../scenario/flags.json', import.meta.url), 'utf8'));
 
 const env = { GH_ORG: 'example-demo-org', LD_PROJECT_KEY: 'example-demo-project', GH_RESET_TOKEN: 'gh-reset-secret', GH_DEMO_TOKEN: 'gh-demo-secret', LD_RESET_TOKEN: 'ld-reset-secret', LD_DEMO_TOKEN: 'ld-demo-secret' };
@@ -644,6 +644,44 @@ test('warming reports an unresolved repository as a manual action, never as clea
   assert.equal(result.manualActions.length, result.unresolved.length, 'each unresolved repository gets an explicit manual action');
   assert.ok(result.manualActions.every((line) => line.includes('repo:')), 'the manual action must contain the exact query to paste');
   for (const name of result.skipped) assert.equal(result.manualActions.some((line) => line.includes(name)), false, 'a deliberately skipped repository is not a defect to chase');
+});
+test('the connection budget derives cost per evaluator from readings, never from a formula', () => {
+  const budget = { schemaVersion: 1, limit: 5, observations: [
+    { at: '2026-08-17T00:00:00Z', used: 0.5, containers: 32 },
+    { at: '2026-08-20T00:00:00Z', used: 3.5, containers: 32 }
+  ], tiers: [{ name: 'minimal', containers: 3, keep: 'x' }, { name: 'full', containers: 32, keep: 'y' }] };
+  const report = connectionBudget(budget, { now: '2026-08-20T00:00:00Z', containers: 32 });
+  // 3.0 used over 3 days at 32 evaluators => 1.0/day => 31 concurrent => ~0.97 each.
+  assert.ok(Math.abs(report.costPerContainer - 0.969) < 0.02, `derived ${report.costPerContainer}`);
+  assert.equal(report.severity, BUDGET_SEVERITY.atRisk, 'staying at 32 must be flagged, not merely noted');
+  assert.ok(report.projectedMonthEnd > budget.limit);
+  assert.equal(report.affordableContainers, 4, 'headroom 1.5 over 11 remaining days at 0.969 each affords 4');
+  assert.equal(report.recommendedTier.name, 'minimal', 'the ladder must fall back to a tier at or under what is affordable');
+});
+test('the budget clears once evaluators drop to what is affordable', () => {
+  const budget = { schemaVersion: 1, limit: 5, observations: [
+    { at: '2026-08-17T00:00:00Z', used: 0.5, containers: 32 },
+    { at: '2026-08-20T00:00:00Z', used: 3.5, containers: 32 }
+  ], tiers: [] };
+  const report = connectionBudget(budget, { now: '2026-08-20T00:00:00Z', containers: 1 });
+  assert.ok(report.projectedMonthEnd <= budget.limit, `projected ${report.projectedMonthEnd}`);
+  assert.notEqual(report.severity, BUDGET_SEVERITY.atRisk);
+});
+test('the budget refuses fabricated observations and warns on stale ones', () => {
+  assert.throws(() => assertBudget({ schemaVersion: 1, limit: 5, observations: [] }), /a projection is not an observation/);
+  assert.throws(() => assertBudget({ schemaVersion: 1, limit: 5, observations: [{ at: 'nonsense', used: 1, containers: 1 }] }), /invalid timestamp/);
+  assert.throws(() => assertBudget({ schemaVersion: 1, limit: 5, observations: [{ at: '2026-08-20T00:00:00Z', used: 1 }] }), /how many evaluators/);
+  const stale = connectionBudget({ schemaVersion: 1, limit: 5, observations: [
+    { at: '2026-08-15T00:00:00Z', used: 1, containers: 2 }, { at: '2026-08-16T00:00:00Z', used: 1.2, containers: 2 }] }, { now: '2026-08-20T00:00:00Z' });
+  assert.ok(stale.warnings.some((line) => /hours old/.test(line)), 'an old reading must not be trusted silently');
+});
+test('the compiled scenario carries a budget verdict for the deployment it declares', () => {
+  const model = compileScenario(scenarioFiles);
+  assert.ok(model.budget, 'the compiler must attach a budget verdict when budget.json is present');
+  assert.equal(model.deployments.length <= model.budget.affordableContainers, true, `scenario declares ${model.deployments.length}, affords ${model.budget.affordableContainers}`);
+  assert.equal(model.budgetWarning, undefined, 'no warning expected while the declared deployment fits the measured budget');
+  const greedy = { ...scenarioFiles, budget: { ...scenarioFiles.budget, limit: 0.5 } };
+  assert.match(compileScenario(greedy).budgetWarning, /CONNECTION BUDGET/, 'exceeding the budget must warn');
 });
 test('the tracked scenario compiles and satisfies the topology and consumer contract', () => {
   const model = compileScenario(scenarioFiles);

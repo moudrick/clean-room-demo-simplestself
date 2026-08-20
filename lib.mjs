@@ -1351,7 +1351,7 @@ function dailyCadenceAllowed(step, sandbox) {
   const day = dayNumber(step.recommendedDate);
   return dailyWindows.some((window) => day >= dayNumber(window.from) && day <= dayNumber(window.to));
 }
-export function compileScenario({ sandbox, services, catalog, steps }) {
+export function compileScenario({ sandbox, services, catalog, steps, budget }, controls = {}) {
   assertSandbox(sandbox); assertFlagCatalog(catalog);
   const { byKey } = assertServices(services, catalog, sandbox);
   const environmentClusters = new Map(sandbox.environments.map((environment) => [environment.key, environment.clusters]));
@@ -1448,7 +1448,19 @@ export function compileScenario({ sandbox, services, catalog, steps }) {
     targeting: targetingList,
     steps: applied
   };
-  return { ...model, checksum: scenarioChecksum(model), distribution: targetingDistribution(targetingList, catalog, sandbox) };
+  const compiled = { ...model, checksum: scenarioChecksum(model), distribution: targetingDistribution(targetingList, catalog, sandbox) };
+  // The budget warns rather than refuses: earlier steps legitimately declared more evaluators than
+  // the measured cost now allows, and rewriting applied history would be worse than flagging it.
+  if (budget) {
+    try {
+      const report = connectionBudget(budget, { ...controls, containers: model.deployments.length });
+      compiled.budget = report;
+      if (report.affordableContainers !== null && model.deployments.length > report.affordableContainers) {
+        compiled.budgetWarning = `CONNECTION BUDGET: this scenario declares ${model.deployments.length} evaluator(s) but measured cost affords ${report.affordableContainers} for the rest of the month (projected ${report.projectedMonthEnd === null ? 'unknown' : report.projectedMonthEnd.toFixed(2)} of ${report.limit}). Recommended tier: ${report.recommendedTier ? report.recommendedTier.name : 'none'}.`;
+      }
+    } catch (error) { compiled.budgetWarning = `CONNECTION BUDGET could not be evaluated: ${error.message}`; }
+  }
+  return compiled;
 }
 export function targetingDistribution(targetingList, catalog, sandbox) {
   const environments = sandbox.environments.map((environment) => environment.key);
@@ -1523,13 +1535,68 @@ export function generateCompose(model, services, sandbox) {
   }
   return `${lines.join('\n')}\n`;
 }
+export const BUDGET_SEVERITY = { ok: 'OK', watch: 'WATCH', atRisk: 'AT-RISK', over: 'OVER' };
+const monthLength = (at) => new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() + 1, 0)).getUTCDate();
+export function assertBudget(budget) {
+  if (!budget || budget.schemaVersion !== 1) throw new Error('budget.json is missing or declares an unsupported schema version.');
+  if (!Number.isFinite(budget.limit) || budget.limit <= 0) throw new Error('budget.json must declare a positive limit.');
+  if (!Array.isArray(budget.observations) || !budget.observations.length) throw new Error('budget.json needs at least one real observation; a projection is not an observation.');
+  for (const entry of budget.observations) {
+    if (Number.isNaN(Date.parse(entry.at || ''))) throw new Error(`Budget observation has an invalid timestamp: ${String(entry.at)}`);
+    if (!Number.isFinite(entry.used) || entry.used < 0) throw new Error('Budget observation must record the usage actually shown by the vendor.');
+    if (!Number.isInteger(entry.containers) || entry.containers < 0) throw new Error('Budget observation must record how many evaluators were running.');
+  }
+  return budget;
+}
+// Cost per evaluator is DERIVED from readings, never assumed. An analytical estimate here was
+// wrong by roughly three hundred times, which is why the tool refuses to compute what it can measure.
+export function connectionBudget(budget, controls = {}) {
+  assertBudget(budget);
+  const now = controls.now ? new Date(controls.now) : new Date();
+  const observations = [...budget.observations].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const latest = observations.at(-1);
+  const days = monthLength(now);
+  const remainingDays = Math.max(0, days - now.getUTCDate());
+  const headroom = budget.limit - latest.used;
+  let burnPerDay = null; let costPerContainer = null; let measuredOver = null;
+  for (let index = observations.length - 1; index > 0; index -= 1) {
+    const to = observations[index]; const from = observations[index - 1];
+    const span = (Date.parse(to.at) - Date.parse(from.at)) / 86400000;
+    if (span <= 0.2 || to.used <= from.used) continue;
+    burnPerDay = (to.used - from.used) / span;
+    measuredOver = { from: from.at, to: to.at, containers: to.containers, days: Number(span.toFixed(2)) };
+    if (to.containers > 0) costPerContainer = (burnPerDay * days) / to.containers;
+    break;
+  }
+  const running = controls.containers ?? latest.containers;
+  const projectedBurn = costPerContainer === null ? null : (costPerContainer * running / days) * remainingDays;
+  const projectedMonthEnd = projectedBurn === null ? null : latest.used + projectedBurn;
+  const affordable = costPerContainer === null || remainingDays === 0 ? null
+    : Math.max(0, Math.floor((headroom * days / remainingDays) / costPerContainer));
+  let severity = BUDGET_SEVERITY.ok; const warnings = [];
+  if (latest.used >= budget.limit) { severity = BUDGET_SEVERITY.over; warnings.push(`Limit reached: ${latest.used} of ${budget.limit} used.`); }
+  else if (projectedMonthEnd !== null && projectedMonthEnd > budget.limit) {
+    severity = BUDGET_SEVERITY.atRisk;
+    warnings.push(`Projected month end ${projectedMonthEnd.toFixed(2)} exceeds the limit of ${budget.limit} at ${running} evaluator(s). Affordable: ${affordable}.`);
+  } else if (latest.used / budget.limit >= 0.6) {
+    severity = BUDGET_SEVERITY.watch;
+    warnings.push(`${((latest.used / budget.limit) * 100).toFixed(0)} per cent of the monthly limit is already used with ${remainingDays} day(s) left.`);
+  }
+  const staleHours = (now.getTime() - Date.parse(latest.at)) / 3600000;
+  if (staleHours > 36) warnings.push(`Latest reading is ${Math.round(staleHours)} hours old. Record a fresh one before trusting this projection.`);
+  const tier = (budget.tiers || []).filter((entry) => affordable === null || entry.containers <= affordable).sort((a, b) => b.containers - a.containers)[0] || null;
+  return { limit: budget.limit, used: latest.used, headroom, observedAt: latest.at, running, remainingDays,
+    burnPerDay, costPerContainer, projectedMonthEnd, affordableContainers: affordable, severity, warnings,
+    measuredOver, recommendedTier: tier };
+}
 export function loadScenario(root = process.cwd(), fileSystem = fs) {
   const directory = path.join(root, 'scenario');
   const read = (name) => JSON.parse(fileSystem.readFileSync(path.join(directory, name), 'utf8'));
   const stepsDirectory = path.join(directory, 'steps');
   const files = fileSystem.readdirSync(stepsDirectory).filter((name) => name.endsWith('.json')).sort();
   const steps = files.map((name) => JSON.parse(fileSystem.readFileSync(path.join(stepsDirectory, name), 'utf8')));
-  return { sandbox: read('sandbox.json'), services: read('services.json'), catalog: read('flags.json'), steps, stepFiles: files };
+  const optional = (name) => { try { return read(name); } catch { return null; } };
+  return { sandbox: read('sandbox.json'), services: read('services.json'), catalog: read('flags.json'), budget: optional('budget.json'), steps, stepFiles: files };
 }
 export function targetingInstructions(entry, flag) {
   const enabled = variationId(flag, true); const disabled = variationId(flag, false);

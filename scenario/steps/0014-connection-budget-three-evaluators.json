@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "s014",
+  "title": "Connection budget: reduce to three evaluators",
+  "recommendedDate": "2026-08-20",
+  "cadence": "daily",
+  "transition": "production-expansion",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "deploy": [
+    {
+      "service": "demo-orders",
+      "environment": "production",
+      "traffic": "paced-probe"
+    },
+    {
+      "service": "demo-orders",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-checkout",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    }
+  ],
+  "targeting": [],
+  "notes": [
+    "LaunchDarkly meters average concurrent SDK connections with a ceiling of five. Thirty-two evaluators burned 3.761 of that in four days and would have hit the limit within a day. Measured cost is 0.975 concurrent per evaluator, against a predicted 0.005 — wrong by roughly two hundred times.",
+    "Short-lived clients reconnecting every five minutes are not cheaper than one held open. Either close() does not release the stream promptly, or reconnects are billed with a minimum duration. The earlier conclusion that short-lived connections were validated came from a single reading taken before the container count was raised, and measured the wrong configuration.",
+    "Three survivors chosen for coverage rather than convenience. demo-orders on Production and Staging carries demo-email-notifications-v2 plus all three false-silence controls in both critical environments. demo-checkout on Production carries demo-tax-calculation-v2 and five other flags. Both archive candidates and every control stay alive.",
+    "Volume is free; connections are what cost. One evaluator covering seven flags at high rate costs the same as one covering a single flag, which is why the cut is by container count and not by traffic rate.",
+    "Projected August close at three evaluators is 4.80 of 5. September starts fresh and the tier ladder in scenario/budget.json defines what to run at each level of remaining headroom."
+  ]
+}
