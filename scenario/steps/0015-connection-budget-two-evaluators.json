@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "s015",
+  "title": "Connection budget: reduce to two evaluators",
+  "recommendedDate": "2026-08-20",
+  "cadence": "daily",
+  "transition": "production-expansion",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "deploy": [
+    {
+      "service": "demo-orders",
+      "environment": "production",
+      "traffic": "paced-probe"
+    },
+    {
+      "service": "demo-orders",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    }
+  ],
+  "targeting": [],
+  "notes": [
+    "A clean 6.3 hour interval at three evaluators measured 0.1436 of connection budget per day against an allowance of 0.1092, projecting 5.38 against a limit of 5. Three is over; two is not.",
+    "This is the tier ladder working as intended: the tool measured the current configuration rather than extrapolating from another, found it unaffordable, and named the fallback.",
+    "demo-orders on Production and Staging retains demo-email-notifications-v2 in both critical environments plus all three false-silence controls, so the surviving archive candidate can still complete rollout, code removal, drain and a provable silence window.",
+    "demo-checkout stops, so demo-tax-calculation-v2 pauses at thirty per cent until the September allowance resets. Its code references and flag identity are untouched."
+  ]
+}

@@ -1535,6 +1535,24 @@ export function generateCompose(model, services, sandbox) {
   }
   return `${lines.join('\n')}\n`;
 }
+// The vendor exposes the same cumulative figure the plan-usage page shows, behind a beta header.
+// Reading it directly removes the transcription step that made earlier readings sparse and stale.
+export async function fetchServiceConnections(fetcher, env, controls = {}) {
+  const t = tokensFor('scenario', env);
+  const response = await fetcher('https://app.launchdarkly.com/api/v2/usage/service-connections', {
+    headers: { Accept: 'application/json', Authorization: t.LD_DEMO_TOKEN, 'LD-API-Version': 'beta' }
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(`Service-connection usage request failed (${response.status}).`);
+  const series = (body?.series || []).map((point) => ({ date: new Date(point.time).toISOString().slice(0, 10), used: point['0'] ?? 0 }));
+  if (!series.length) throw new Error('Service-connection usage returned no series.');
+  const month = (controls.month || series.at(-1).date).slice(0, 7);
+  const inMonth = series.filter((point) => point.date.startsWith(month));
+  const latest = inMonth.at(-1) || series.at(-1);
+  // The series is cumulative within the month, so a day's cost is its delta from the day before.
+  const deltas = inMonth.map((point, index) => ({ date: point.date, delta: index === 0 ? point.used : point.used - inMonth[index - 1].used }));
+  return { month, latest, series: inMonth, deltas };
+}
 export const BUDGET_SEVERITY = { ok: 'OK', watch: 'WATCH', atRisk: 'AT-RISK', over: 'OVER' };
 const monthLength = (at) => new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() + 1, 0)).getUTCDate();
 export function assertBudget(budget) {
@@ -1562,14 +1580,21 @@ export function connectionBudget(budget, controls = {}) {
   for (let index = observations.length - 1; index > 0; index -= 1) {
     const to = observations[index]; const from = observations[index - 1];
     const span = (Date.parse(to.at) - Date.parse(from.at)) / 86400000;
-    if (span <= 0.2 || to.used <= from.used) continue;
+    // An interval that spans a change in evaluator count attributes one configuration's cost to
+    // another. That is precisely how the overrun was mis-projected, so such intervals are skipped.
+    if (span <= 0.2 || to.used <= from.used || from.containers !== to.containers) continue;
     burnPerDay = (to.used - from.used) / span;
     measuredOver = { from: from.at, to: to.at, containers: to.containers, days: Number(span.toFixed(2)) };
     if (to.containers > 0) costPerContainer = (burnPerDay * days) / to.containers;
     break;
   }
   const running = controls.containers ?? latest.containers;
-  const projectedBurn = costPerContainer === null ? null : (costPerContainer * running / days) * remainingDays;
+  // When the measurement was taken at the configuration we are actually running, use its daily
+  // burn directly. Only scale by evaluator count when projecting onto a different configuration,
+  // and flag that as indicative because the per-evaluator cost is not linear.
+  const sameShape = measuredOver && measuredOver.containers === running && burnPerDay !== null;
+  const projectedBurn = sameShape ? burnPerDay * remainingDays
+    : (costPerContainer === null ? null : (costPerContainer * running / days) * remainingDays);
   const projectedMonthEnd = projectedBurn === null ? null : latest.used + projectedBurn;
   const affordable = costPerContainer === null || remainingDays === 0 ? null
     : Math.max(0, Math.floor((headroom * days / remainingDays) / costPerContainer));
@@ -1582,10 +1607,19 @@ export function connectionBudget(budget, controls = {}) {
     severity = BUDGET_SEVERITY.watch;
     warnings.push(`${((latest.used / budget.limit) * 100).toFixed(0)} per cent of the monthly limit is already used with ${remainingDays} day(s) left.`);
   }
+  // Cost per evaluator is NOT linear in evaluator count: measured 0.012 each at twelve and 0.043
+  // each at thirty-two. So the reliable control is a daily spend ceiling derived from headroom,
+  // checked against what the current configuration actually costs per day. Extrapolating one
+  // configuration's per-evaluator cost onto another is the mistake that caused the overrun.
+  const allowedDailyDelta = remainingDays > 0 ? headroom / remainingDays : null;
+  if (costPerContainer !== null && measuredOver && measuredOver.containers !== running) {
+    warnings.push(`No clean measurement at ${running} evaluator(s) yet: cost was measured at ${measuredOver.containers}. Cost per evaluator is not linear, so treat the projection as indicative and re-check after a full day at the current count.`);
+  }
+  if (costPerContainer === null) warnings.push('No interval with a stable evaluator count yet, so cost per evaluator cannot be derived. Judge by daily spend against the allowed rate instead.');
   const staleHours = (now.getTime() - Date.parse(latest.at)) / 3600000;
   if (staleHours > 36) warnings.push(`Latest reading is ${Math.round(staleHours)} hours old. Record a fresh one before trusting this projection.`);
   const tier = (budget.tiers || []).filter((entry) => affordable === null || entry.containers <= affordable).sort((a, b) => b.containers - a.containers)[0] || null;
-  return { limit: budget.limit, used: latest.used, headroom, observedAt: latest.at, running, remainingDays,
+  return { limit: budget.limit, used: latest.used, headroom, observedAt: latest.at, running, remainingDays, allowedDailyDelta,
     burnPerDay, costPerContainer, projectedMonthEnd, affordableContainers: affordable, severity, warnings,
     measuredOver, recommendedTier: tier };
 }

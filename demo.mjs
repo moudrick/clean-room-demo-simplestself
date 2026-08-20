@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { doctor, recreate, refresh, destroy, audit, baseline, bootstrapFlags, mergeCampaign, campaignWithIndexing, warmRepositoryIndex, connectionBudget, loadScenario, compileScenario, stepsThrough, reconcileStep, scenarioStatus, settingsFor, REPOS, FLAGS, ENVIRONMENTS, progressLine, redact } from './lib.mjs';
+import { doctor, recreate, refresh, destroy, audit, baseline, bootstrapFlags, mergeCampaign, campaignWithIndexing, warmRepositoryIndex, connectionBudget, fetchServiceConnections, loadScenario, compileScenario, stepsThrough, reconcileStep, scenarioStatus, settingsFor, REPOS, FLAGS, ENVIRONMENTS, progressLine, redact } from './lib.mjs';
 
 function loadEnv() {
   const file = '.env';
@@ -155,6 +155,20 @@ try {
     } else if (sub === 'budget') {
       const file = 'scenario/budget.json';
       const budget = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const containersNow = Number(argumentAfter('--containers') ?? compileScenario(scenario).deployments.length);
+      let usage = null;
+      if (!process.argv.includes('--offline')) {
+        try {
+          usage = await fetchServiceConnections(fetch, env);
+          const last = budget.observations.at(-1);
+          if (!last || last.used !== usage.latest.used || last.containers !== containersNow) {
+            budget.observations.push({ at: new Date().toISOString(), used: usage.latest.used, containers: containersNow, note: `live reading for ${usage.latest.date}` });
+            fs.writeFileSync(file, `${JSON.stringify(budget, null, 2)}
+`);
+            console.log(`Recorded live reading ${usage.latest.used.toFixed(4)} for ${usage.latest.date} at ${containersNow} evaluator(s).`);
+          }
+        } catch (error) { console.log(`Live usage unavailable (${error.message}); falling back to recorded observations.`); }
+      }
       const record = argumentAfter('--record');
       if (record !== undefined) {
         const used = Number(record);
@@ -170,6 +184,12 @@ try {
       if (report.measuredOver) console.log(`Measured over ${report.measuredOver.days} day(s) at ${report.measuredOver.containers} evaluator(s): ${report.costPerContainer.toFixed(3)} concurrent connection(s) per evaluator.`);
       console.log(`At ${report.running} evaluator(s), projected month end ${report.projectedMonthEnd === null ? 'unknown' : report.projectedMonthEnd.toFixed(2)}; affordable ${report.affordableContainers ?? 'unknown'}.`);
       if (report.recommendedTier) console.log(`Recommended tier: ${report.recommendedTier.name} — ${report.recommendedTier.keep}`);
+      if (report.allowedDailyDelta !== null) console.log(`ALLOWED DAILY SPEND from here: ${report.allowedDailyDelta.toFixed(4)} per day for ${report.remainingDays} day(s).`);
+      if (usage) {
+        console.log('DATE | ACTUAL DAILY SPEND | VERDICT');
+        for (const day of usage.deltas.slice(-4)) console.log(`${day.date} | ${day.delta.toFixed(4)} | ${day.delta > report.allowedDailyDelta ? 'OVER the sustainable rate' : 'within budget'}`);
+        console.log('Cost per evaluator is not linear in evaluator count, so judge by daily spend at the current configuration rather than by extrapolating from another.');
+      }
       for (const warning of report.warnings) console.log(`WARNING: ${warning}`);
       console.log('TIER | EVALUATORS | KEEP');
       for (const tier of budget.tiers || []) console.log(`${tier.name} | ${tier.containers} | ${tier.keep}`);

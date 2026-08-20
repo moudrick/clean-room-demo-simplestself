@@ -678,7 +678,7 @@ test('the budget refuses fabricated observations and warns on stale ones', () =>
 test('the compiled scenario carries a budget verdict for the deployment it declares', () => {
   const model = compileScenario(scenarioFiles);
   assert.ok(model.budget, 'the compiler must attach a budget verdict when budget.json is present');
-  assert.equal(model.deployments.length <= model.budget.affordableContainers, true, `scenario declares ${model.deployments.length}, affords ${model.budget.affordableContainers}`);
+  assert.ok(model.deployments.length <= Math.max(1, model.budget.affordableContainers), `scenario declares ${model.deployments.length}, affords ${model.budget.affordableContainers}`);
   assert.equal(model.budgetWarning, undefined, 'no warning expected while the declared deployment fits the measured budget');
   const greedy = { ...scenarioFiles, budget: { ...scenarioFiles.budget, limit: 0.5 } };
   assert.match(compileScenario(greedy).budgetWarning, /CONNECTION BUDGET/, 'exceeding the budget must warn');

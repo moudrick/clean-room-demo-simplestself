@@ -8,14 +8,6 @@ x-rotated-logs: &rotated-logs
     max-size: 10m
     max-file: "3"
 
-x-checkout: &checkout
-  build: ./repos/demo-checkout
-  image: clean-room-demo/demo-checkout:local
-  init: true
-  restart: unless-stopped
-  stop_grace_period: 30s
-  logging: *rotated-logs
-
 x-orders: &orders
   build: ./repos/demo-orders
   image: clean-room-demo/demo-orders:local
@@ -25,13 +17,6 @@ x-orders: &orders
   logging: *rotated-logs
 
 services:
-  checkout-production:
-    <<: *checkout
-    environment:
-      <<: *runtime-environment
-      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
-      DEMO_ENVIRONMENT: production
-    command: ["npm", "run", "traffic", "--", "--profile", "production"]
   orders-production:
     <<: *orders
     environment:
