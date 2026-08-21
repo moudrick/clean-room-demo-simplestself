@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "s016",
+  "title": "Earliest track: demo-email-notifications-v2 reaches full Production",
+  "recommendedDate": "2026-08-21",
+  "cadence": "daily",
+  "transition": "production-expansion",
+  "minGapDaysFromPrevious": 1,
+  "gates": [],
+  "targeting": [
+    {
+      "flag": "demo-email-notifications-v2",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02",
+        "stg-eu-central-01"
+      ]
+    },
+    {
+      "flag": "demo-email-notifications-v2",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02",
+        "prod-us-east-02",
+        "prod-emea-central-04",
+        "prod-eu-west-01"
+      ]
+    },
+    {
+      "flag": "demo-tax-calculation-v2",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02",
+        "stg-eu-central-01"
+      ]
+    },
+    {
+      "flag": "demo-tax-calculation-v2",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02",
+        "prod-us-east-02"
+      ]
+    }
+  ],
+  "notes": [
+    "Adds prod-eu-west-01 at forty per cent of population, the largest cluster and the last one. demo-email-notifications-v2 now serves true to all Production traffic, completing the accelerating curve of 5, 15, 30, 60, 100.",
+    "Applied at the start of the business-hours window so the final and largest step is sampled at hundred-context batches for roughly eleven hours rather than at forty overnight. This is the step where timing matters most.",
+    "Rules still, not a fallthrough change. The terminal state comes next: clearing the rules and serving true, which is the last targeting change before the seven-day stability window begins.",
+    "demo-tax-calculation-v2 remains restated at thirty per cent. It has no evaluator under the current connection budget, and advancing an unobserved flag would spend schedule without buying evidence."
+  ]
+}

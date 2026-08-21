@@ -33,6 +33,12 @@
       "used": 3.79849315,
       "containers": 3,
       "note": "live reading for 2026-08-20"
+    },
+    {
+      "at": "2026-08-21T07:25:43.692Z",
+      "used": 3.815913239999999,
+      "containers": 2,
+      "note": "live reading for 2026-08-21"
     }
   ],
   "tiers": [
