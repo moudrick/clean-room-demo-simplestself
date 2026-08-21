@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "s017",
+  "title": "Trade the single-flag rate probe for seven-flag coverage in Production",
+  "recommendedDate": "2026-08-21",
+  "cadence": "daily",
+  "transition": "production-expansion",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "deploy": [
+    {
+      "service": "demo-orders",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-orders",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    }
+  ],
+  "targeting": [],
+  "notes": [
+    "The bounded Production probe evaluates only the first flag a release owns, by design, so at two evaluators demo-email-notifications-v2 had full Production targeting and no Production caller. Its drain would have been unprovable in a critical environment, which is the heart of the archive story.",
+    "Under a connection budget the probe is poor value: one connection covering one flag against one covering seven. Switching demo-orders Production to the ordinary business-hours pattern costs no additional connection and restores coverage of all seven flags, including both the surviving archive candidate and all three false-silence controls.",
+    "What is lost is the 1200 evaluations per hour demonstration on demo-cart-v2. Volume was never the constraint and can be restored in September when the allowance resets; flag coverage in a critical environment cannot be recovered retroactively, because evaluation history is real elapsed time.",
+    "Found by reading the running probe output rather than the configuration. The traffic pattern was correct in the scenario and wrong for the purpose."
+  ]
+}

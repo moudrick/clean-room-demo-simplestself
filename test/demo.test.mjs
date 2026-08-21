@@ -284,8 +284,13 @@ test('Compose covers every repository/environment pair without evaluating the re
     assert.equal([...compose.matchAll(new RegExp(`"--profile", "${key}"`, 'g'))].length, perEnvironment);
     assert.equal([...compose.matchAll(new RegExp(`DEMO_ENVIRONMENT: ${key}`, 'g'))].length, perEnvironment);
   }
-  assert.equal([...compose.matchAll(/^      DEMO_EVALUATIONS_PER_HOUR:/gm)].length, 1); assert.equal([...compose.matchAll(/^      DEMO_CONTEXT_POOL_SIZE:/gm)].length, 1);
-  assert.match(compose, /DEMO_EVALUATIONS_PER_HOUR:-1200/); assert.match(compose, /DEMO_GENERATION_ID/);
+  // Probe settings appear only for tuples whose traffic pattern is paced. Under a connection
+  // budget the probe may be traded for broader flag coverage, so derive the count, never assume one.
+  const paced = model.deployments.filter((tuple) => scenarioFiles.sandbox.trafficPatterns[tuple.traffic]?.kind === 'paced').length;
+  assert.equal([...compose.matchAll(/^      DEMO_EVALUATIONS_PER_HOUR:/gm)].length, paced);
+  assert.equal([...compose.matchAll(/^      DEMO_CONTEXT_POOL_SIZE:/gm)].length, paced);
+  if (paced) assert.match(compose, /DEMO_EVALUATIONS_PER_HOUR:-1200/);
+  assert.match(compose, /DEMO_GENERATION_ID/);
   assert.equal(compose.includes('demo-retired-banner'), false); assert.match(compose, /restart: unless-stopped/); assert.match(compose, /max-size: 10m/);
 });
 test('GitHub Actions checks direct pushes to main without lifecycle commands', () => {

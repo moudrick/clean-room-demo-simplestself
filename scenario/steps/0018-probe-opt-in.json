@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "s018",
+  "title": "Release v003: the load probe becomes opt-in instead of hardcoded",
+  "recommendedDate": "2026-08-21",
+  "cadence": "daily",
+  "transition": "production-expansion",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "updateServices": [
+    "demo-orders"
+  ],
+  "releaseTags": {
+    "demo-orders": "v003"
+  },
+  "targeting": [],
+  "notes": [
+    "The generated evaluator decided to be a rate probe purely from its own service name and environment: demo-orders in Production, always. Changing the declared traffic pattern had no effect, so s017 restarted the container and it simply kept probing.",
+    "A service name must never decide traffic shape on its own. The probe is now opt-in through DEMO_LOAD_PROBE, which Compose sets only for tuples whose declared pattern is paced. Configuration and behaviour finally agree.",
+    "Consequence: demo-orders Production evaluates all seven flags it owns, including demo-email-notifications-v2 and all three false-silence controls, instead of demo-cart-v2 alone. Under a two-evaluator budget that is the difference between a provable Production drain and an unprovable one.",
+    "Found by reading the running probe output rather than the configuration, which had looked correct throughout. Third defect in this family: flags[0] only, hardcoded cluster offsets, and now hardcoded probe selection."
+  ]
+}

@@ -315,7 +315,10 @@ async function probeTraffic(client, options) {
 async function main() {
   const sdkKey = process.env.LD_EVALUATION_SDK_KEY;
   if (!sdkKey) throw new Error('LD_EVALUATION_SDK_KEY is required.');
-  const options = optionsFrom(process.argv.slice(2)); const probe = options.traffic && isLoadProbe(repository, options.profile);
+  const options = optionsFrom(process.argv.slice(2));
+  // The probe is opt-in: a service name must never decide traffic shape on its own, because a
+  // single-flag rate probe covers one flag where an ordinary batch covers every flag the release owns.
+  const probe = options.traffic && isLoadProbe(repository, options.profile) && process.env.DEMO_LOAD_PROBE === 'true';
   const connect = () => LaunchDarkly.init(sdkKey, {
     capacity: 10000, flushInterval: 5, enableEventCompression: true,
     contextKeysCapacity: Math.min(options.contextPoolSize, 10000), contextKeysFlushInterval: 300, logger,
@@ -1530,7 +1533,7 @@ export function generateCompose(model, services, sandbox) {
     lines.push(`  ${composeServiceName(tuple.service, tuple.environment)}:`, `    <<: *${tuple.service.replace(/^demo-/, '')}`, '    environment:', '      <<: *runtime-environment',
       `      LD_EVALUATION_SDK_KEY: \${LD_EVALUATION_SDK_KEY_${tuple.environment.toUpperCase()}:?missing ${tuple.environment} SDK key}`,
       `      DEMO_ENVIRONMENT: ${tuple.environment}`);
-    if (probe) lines.push('      DEMO_EVALUATIONS_PER_HOUR: ${DEMO_EVALUATIONS_PER_HOUR:-1200}', '      DEMO_CONTEXT_POOL_SIZE: ${DEMO_CONTEXT_POOL_SIZE:-1000}');
+    if (probe) lines.push('      DEMO_LOAD_PROBE: "true"', '      DEMO_EVALUATIONS_PER_HOUR: ${DEMO_EVALUATIONS_PER_HOUR:-1200}', '      DEMO_CONTEXT_POOL_SIZE: ${DEMO_CONTEXT_POOL_SIZE:-1000}');
     lines.push(`    command: [${[...runtime.command, tuple.environment].map((part) => `"${part}"`).join(', ')}]`);
   }
   return `${lines.join('\n')}\n`;
