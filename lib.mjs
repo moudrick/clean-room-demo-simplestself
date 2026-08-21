@@ -1599,8 +1599,14 @@ export function connectionBudget(budget, controls = {}) {
   const projectedBurn = sameShape ? burnPerDay * remainingDays
     : (costPerContainer === null ? null : (costPerContainer * running / days) * remainingDays);
   const projectedMonthEnd = projectedBurn === null ? null : latest.used + projectedBurn;
-  const affordable = costPerContainer === null || remainingDays === 0 ? null
+  // Scaling is super-linear: 32 evaluators cost roughly 76 times what 2 do, for 16 times the count.
+  // So an affordability figure extrapolated far beyond the measured configuration is not evidence,
+  // it is the same error that caused the overrun. Cap the recommendation at twice what has actually
+  // been measured and require a fresh reading before going further.
+  const naive = costPerContainer === null || remainingDays === 0 ? null
     : Math.max(0, Math.floor((headroom * days / remainingDays) / costPerContainer));
+  const measuredCount = measuredOver ? measuredOver.containers : null;
+  const affordable = naive === null ? null : (measuredCount ? Math.min(naive, measuredCount * 2) : naive);
   let severity = BUDGET_SEVERITY.ok; const warnings = [];
   if (latest.used >= budget.limit) { severity = BUDGET_SEVERITY.over; warnings.push(`Limit reached: ${latest.used} of ${budget.limit} used.`); }
   else if (projectedMonthEnd !== null && projectedMonthEnd > budget.limit) {
@@ -1619,6 +1625,7 @@ export function connectionBudget(budget, controls = {}) {
     warnings.push(`No clean measurement at ${running} evaluator(s) yet: cost was measured at ${measuredOver.containers}. Cost per evaluator is not linear, so treat the projection as indicative and re-check after a full day at the current count.`);
   }
   if (costPerContainer === null) warnings.push('No interval with a stable evaluator count yet, so cost per evaluator cannot be derived. Judge by daily spend against the allowed rate instead.');
+  if (naive !== null && affordable !== null && naive > affordable) warnings.push(`Raw headroom suggests ${naive} evaluator(s), but cost scales super-linearly and only ${measuredCount} has been measured. Capped at ${affordable}; step up gradually and re-measure after a full day.`);
   const staleHours = (now.getTime() - Date.parse(latest.at)) / 3600000;
   if (staleHours > 36) warnings.push(`Latest reading is ${Math.round(staleHours)} hours old. Record a fresh one before trusting this projection.`);
   const tier = (budget.tiers || []).filter((entry) => affordable === null || entry.containers <= affordable).sort((a, b) => b.containers - a.containers)[0] || null;
