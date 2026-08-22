@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "id": "s019",
+  "title": "Targeting freeze: demo-email-notifications-v2 serves true, rules cleared",
+  "recommendedDate": "2026-08-22",
+  "cadence": "daily",
+  "transition": "staging-complete",
+  "minGapDaysFromPrevious": 1,
+  "gates": [],
+  "targeting": [
+    {
+      "flag": "demo-email-notifications-v2",
+      "environment": "staging",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-email-notifications-v2",
+      "environment": "production",
+      "state": "on",
+      "serve": "true"
+    },
+    {
+      "flag": "demo-tax-calculation-v2",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02",
+        "stg-eu-central-01"
+      ]
+    },
+    {
+      "flag": "demo-tax-calculation-v2",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02",
+        "prod-sa-east-02",
+        "prod-us-east-02"
+      ]
+    }
+  ],
+  "notes": [
+    "The terminal fully-rolled-out state: fallthrough true with the cluster rules cleared. Invisible in the evaluation data because the flag already served true to every context, and that is the point — its significance is structural, not statistical.",
+    "This is the last targeting change for demo-email-notifications-v2. The seven-day no-targeting-changes window opens now, so code removal becomes permissible around 29 August.",
+    "From here the flag needs nothing except to keep being evaluated, so that when evaluations later stop it is because code was removed rather than because nobody was watching."
+  ]
+}

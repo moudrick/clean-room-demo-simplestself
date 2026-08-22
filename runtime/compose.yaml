@@ -16,9 +16,39 @@ x-orders: &orders
   stop_grace_period: 30s
   logging: *rotated-logs
 
+x-profile: &profile
+  build: ./repos/demo-profile
+  image: clean-room-demo/demo-profile:local
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *rotated-logs
+
+x-storefront: &storefront
+  build: ./repos/demo-storefront
+  image: clean-room-demo/demo-storefront:local
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 30s
+  logging: *rotated-logs
+
 services:
   orders-production:
     <<: *orders
+    environment:
+      <<: *runtime-environment
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+      DEMO_ENVIRONMENT: production
+    command: ["npm", "run", "traffic", "--", "--profile", "production"]
+  profile-production:
+    <<: *profile
+    environment:
+      <<: *runtime-environment
+      LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}
+      DEMO_ENVIRONMENT: production
+    command: ["npm", "run", "traffic", "--", "--profile", "production"]
+  storefront-production:
+    <<: *storefront
     environment:
       <<: *runtime-environment
       LD_EVALUATION_SDK_KEY: ${LD_EVALUATION_SDK_KEY_PRODUCTION:?missing production SDK key}

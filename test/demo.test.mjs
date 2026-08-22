@@ -721,7 +721,9 @@ test('service validation enforces catalog membership and consumer spread', () =>
 });
 test('the compiler is forward-only and refuses contract violations', () => {
   const base = () => JSON.parse(JSON.stringify(scenarioFiles));
-  const rerun = base(); rerun.steps.push({ ...JSON.parse(JSON.stringify(rerun.steps[0])), id: 's900', recommendedDate: '2026-08-21' });
+  // Dates derive from the last real step so campaign growth cannot rot these fixtures.
+  const after = (scenario) => new Date(Date.parse(`${scenario.steps.at(-1).recommendedDate}T00:00:00.000Z`) + 86400000).toISOString().slice(0, 10);
+  const rerun = base(); rerun.steps.push({ ...JSON.parse(JSON.stringify(rerun.steps[0])), id: 's900', recommendedDate: after(rerun) });
   assert.throws(() => compileScenario(rerun), /re-introduces/);
   const backward = base(); backward.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: '2026-08-01', cadence: 'three-day' });
   assert.throws(() => compileScenario(backward), /forward-only/);
@@ -738,7 +740,7 @@ test('the compiler is forward-only and refuses contract violations', () => {
   assert.throws(() => compileScenario(undeclared), /does not declare it as a consumer/);
   // Derived from the last real step so adding campaign steps cannot break this assertion.
   const gap = base();
-  const dayAfterLast = new Date(Date.parse(`${gap.steps.at(-1).recommendedDate}T00:00:00.000Z`) + 86400000).toISOString().slice(0, 10);
+  const dayAfterLast = after(gap);
   gap.steps.push({ schemaVersion: 1, id: 's900', recommendedDate: dayAfterLast, cadence: 'three-day', minGapDaysFromPrevious: 3 });
   assert.throws(() => compileScenario(gap), /requires at least 3/);
 });

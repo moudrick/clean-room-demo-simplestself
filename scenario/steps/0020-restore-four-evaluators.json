@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "s020",
+  "title": "Restore four evaluators to stop manufacturing false silence",
+  "recommendedDate": "2026-08-22",
+  "cadence": "daily",
+  "transition": "production-expansion",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "deploy": [
+    {
+      "service": "demo-orders",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-orders",
+      "environment": "staging",
+      "traffic": "business-hours-staging"
+    },
+    {
+      "service": "demo-storefront",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    },
+    {
+      "service": "demo-profile",
+      "environment": "production",
+      "traffic": "business-hours-production"
+    }
+  ],
+  "targeting": [],
+  "notes": [
+    "Sixteen flags had gone 39 to 45 hours without evaluations after the 20 August budget cut. They would have crossed the seven-day no-evaluations threshold around 27 August and looked archive-ready because nobody was watching, which is the precise failure this talk is about, manufactured by us.",
+    "Four evaluators is the cap the budget tool allows: twice the two that have actually been measured. Raw headroom suggested fifty-one, but cost scales super-linearly and extrapolating beyond the measured configuration is what caused the overrun.",
+    "Chosen for flag coverage: demo-storefront adds five flags, demo-profile adds three including the protected candidate demo-profile-preferences. Production coverage rises from seven flags to fifteen.",
+    "Measure a full day at four before considering eight. Spending at two evaluators was 0.011 per day against an allowance of 0.131."
+  ]
+}

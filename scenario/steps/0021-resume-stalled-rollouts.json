@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "id": "s021",
+  "title": "Resume stalled rollouts: protected pair starts, open track crawls again",
+  "recommendedDate": "2026-08-22",
+  "cadence": "daily",
+  "transition": "staging-canary",
+  "minGapDaysFromPrevious": 0,
+  "gates": [],
+  "targeting": [
+    {
+      "flag": "demo-express-returns",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02"
+      ]
+    },
+    {
+      "flag": "demo-express-returns",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02"
+      ]
+    },
+    {
+      "flag": "demo-profile-preferences",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02"
+      ]
+    },
+    {
+      "flag": "demo-profile-preferences",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02"
+      ]
+    },
+    {
+      "flag": "demo-identity-passkeys",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02",
+        "stg-eu-central-01"
+      ]
+    },
+    {
+      "flag": "demo-identity-passkeys",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02"
+      ]
+    },
+    {
+      "flag": "demo-recommendation-model-v2",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02",
+        "stg-eu-central-01"
+      ]
+    },
+    {
+      "flag": "demo-recommendation-model-v2",
+      "environment": "production",
+      "state": "on",
+      "clusters": [
+        "prod-eu-west-02"
+      ]
+    },
+    {
+      "flag": "demo-search-ranking-v3",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02"
+      ]
+    },
+    {
+      "flag": "demo-personalized-home",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02"
+      ]
+    },
+    {
+      "flag": "demo-shipping-estimates",
+      "environment": "staging",
+      "state": "on",
+      "clusters": [
+        "stg-eu-central-02"
+      ]
+    }
+  ],
+  "notes": [
+    "The protected pair is the most schedule-critical gap: both sat at zero per cent rollout with nothing started, yet they are the flags to be archived live on stage. Their chain is rollout, seven days targeting-stable, code removal, drain, seven days silence, thirty days age — roughly twenty days minimum. Starting today clears 5 October with margin rather than by luck.",
+    "Only flags whose consumers are actually deployed after s020 are targeted here. Targeting a flag with no caller advances the schedule without buying evidence, which is the mistake made with demo-tax-calculation-v2 and deliberately not repeated.",
+    "demo-checkout-address-validation is left alone: its consumers demo-shipping and demo-checkout are still not deployed under the four-evaluator cap.",
+    "The open-track flags resume their slow crawl so something is still visibly mid-crossover on demo day rather than everything having finished."
+  ]
+}
